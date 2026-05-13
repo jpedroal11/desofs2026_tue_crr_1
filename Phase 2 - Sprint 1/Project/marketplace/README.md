@@ -48,7 +48,7 @@ open http://localhost:8000/docs
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///./marketplace.db` | Database connection string |
+| `DATABASE_URL` | `postgresql://user:password@localhost:5432/mydb` | Database connection string |
 | `SECRET_KEY` | (insecure default) | JWT signing secret — **change in production!** |
 
 ### PostgreSQL example
