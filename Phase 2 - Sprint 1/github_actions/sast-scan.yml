@@ -1,0 +1,92 @@
+name: SAST Scanning
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+  workflow_dispatch:
+
+jobs:
+  bandit:
+    name: Bandit SAST Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit
+        run: |
+          bandit \
+            --recursive marketplace/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --format json \
+            --output bandit-report.json \
+            --exclude marketplace/__pycache__ \
+            || true   # don't fail the step so we can upload the report
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 14
+
+      - name: Fail on high-severity issues
+        run: |
+          bandit \
+            --recursive marketplace/ \
+            --severity-level high \
+            --confidence-level high \
+            --exclude marketplace/__pycache__
+
+  semgrep:
+    name: Semgrep SAST Scan
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep \
+            --config "p/python" \
+            --config "p/flask" \
+            --config "p/sqlalchemy" \
+            --config "p/owasp-top-ten" \
+            --config "p/secrets" \
+            --json \
+            --output semgrep-report.json \
+            marketplace/ run.py \
+            || true
+
+      - name: Upload Semgrep report
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+          retention-days: 14
+
+      - name: Fail on blocking findings
+        run: |
+          semgrep \
+            --config "p/python" \
+            --config "p/flask" \
+            --config "p/sqlalchemy" \
+            --config "p/owasp-top-ten" \
+            --config "p/secrets" \
+            --error \
+            marketplace/ run.py
