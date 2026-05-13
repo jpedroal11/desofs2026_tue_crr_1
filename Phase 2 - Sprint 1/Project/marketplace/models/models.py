@@ -53,6 +53,7 @@ class Product(Base):
 
     seller = relationship("User", back_populates="products")
     order_items = relationship("OrderItem", back_populates="product")
+    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan")
 
 
 class Order(Base):
@@ -81,3 +82,18 @@ class OrderItem(Base):
 
     order = relationship("Order", back_populates="items")
     product = relationship("Product", back_populates="order_items")
+
+
+class ProductImage(Base):
+    __tablename__ = "product_images"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    filename = Column(String, unique=True, nullable=False)       # UUID-based filename on disk
+    original_filename = Column(String, nullable=False)            # Sanitized original name
+    mime_type = Column(String, nullable=False)
+    file_size = Column(Integer, nullable=False)                   # bytes
+    sha256_hash = Column(String(64), nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+    product = relationship("Product", back_populates="images")

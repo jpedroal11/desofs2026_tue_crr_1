@@ -1,16 +1,22 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import os
+from pathlib import Path
 
 from core.dependencies import engine
 from models.models import Base
-from routers import auth, users, products, orders
+from routers import auth, users, products, orders, images
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create all tables on startup
     Base.metadata.create_all(bind=engine)
+    # Ensure upload directory exists with restricted permissions
+    upload_dir = Path(os.getenv("UPLOAD_DIR", "uploads"))
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(upload_dir, 0o750)
     yield
 
 
@@ -33,6 +39,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(products.router)
 app.include_router(orders.router)
+app.include_router(images.router)
 
 
 @app.get("/", tags=["Health"])

@@ -88,12 +88,25 @@ class StockAdjustment(BaseModel):
         return v
 
 
+class ProductImageResponse(BaseModel):
+    id: int
+    filename: str
+    original_filename: str
+    mime_type: str
+    file_size: int
+    sha256_hash: str
+    uploaded_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ProductResponse(ProductBase):
     id: int
     status: ProductStatus
     seller_id: int
     created_at: datetime
     updated_at: datetime
+    images: List[ProductImageResponse] = []
 
     model_config = {"from_attributes": True}
 
