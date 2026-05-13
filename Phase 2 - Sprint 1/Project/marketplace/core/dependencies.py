@@ -10,17 +10,14 @@ import os
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./marketplace.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/mydb")
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-use-a-long-random-string")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-)
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
