@@ -15,6 +15,13 @@ class OrderStatus(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class ProductStatus(str, enum.Enum):
+    draft = "draft"
+    active = "active"
+    archived = "archived"
+
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -39,7 +46,7 @@ class Product(Base):
     description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
     stock = Column(Integer, default=0)
-    is_active = Column(Boolean, default=True)
+    status = Column(Enum(ProductStatus), default=ProductStatus.draft)
     seller_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
