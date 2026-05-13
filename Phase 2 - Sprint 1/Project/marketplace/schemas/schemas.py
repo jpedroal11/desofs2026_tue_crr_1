@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List
 from datetime import datetime
-from models.models import OrderStatus
+from models.models import OrderStatus, ProductStatus
 
 
 # ── User Schemas ──────────────────────────────────────────────────────────────
@@ -70,12 +70,27 @@ class ProductUpdate(BaseModel):
     description: Optional[str] = None
     price: Optional[float] = None
     stock: Optional[int] = None
-    is_active: Optional[bool] = None
+    status: Optional[ProductStatus] = None
+
+
+class ProductStatusUpdate(BaseModel):
+    status: ProductStatus
+
+
+class StockAdjustment(BaseModel):
+    quantity: int
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("Quantity must be positive")
+        return v
 
 
 class ProductResponse(ProductBase):
     id: int
-    is_active: bool
+    status: ProductStatus
     seller_id: int
     created_at: datetime
     updated_at: datetime

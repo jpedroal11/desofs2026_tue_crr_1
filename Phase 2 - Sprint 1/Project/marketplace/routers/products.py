@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from core.dependencies import get_db, get_current_user
-from models.models import Product, User
-from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse
+from models.models import Product, User, ProductStatus
+from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -19,7 +19,7 @@ def list_products(
     db: Session = Depends(get_db),
 ):
     """List available products with optional filters."""
-    query = db.query(Product).filter(Product.is_active == True, Product.stock > 0)
+    query = db.query(Product).filter(Product.status == ProductStatus.active, Product.stock > 0)
 
     if min_price is not None:
         query = query.filter(Product.price >= min_price)
@@ -92,5 +92,68 @@ def delete_product(
     if product.seller_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not allowed to delete this product")
 
-    product.is_active = False
+    product.status = ProductStatus.archived
     db.commit()
+
+
+@router.patch("/{product_id}/status", response_model=ProductResponse)
+def update_product_status(
+    product_id: int,
+    status_update: ProductStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update product status (e.g., draft -> active)."""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.seller_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to update this product")
+
+    product.status = status_update.status
+    db.commit()
+    db.refresh(product)
+    return product
+
+
+@router.post("/{product_id}/stock/add", response_model=ProductResponse)
+def add_product_stock(
+    product_id: int,
+    adjustment: StockAdjustment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add stock to a product."""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.seller_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to update this product")
+
+    product.stock += adjustment.quantity
+    db.commit()
+    db.refresh(product)
+    return product
+
+
+@router.post("/{product_id}/stock/reduce", response_model=ProductResponse)
+def reduce_product_stock(
+    product_id: int,
+    adjustment: StockAdjustment,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reduce stock from a product (cannot go below 0)."""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.seller_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to update this product")
+
+    if product.stock < adjustment.quantity:
+        raise HTTPException(status_code=400, detail="Insufficient stock")
+
+    product.stock -= adjustment.quantity
+    db.commit()
+    db.refresh(product)
+    return product
