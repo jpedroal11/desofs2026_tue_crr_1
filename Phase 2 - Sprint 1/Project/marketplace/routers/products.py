@@ -6,6 +6,8 @@ from core.dependencies import get_db, get_current_user
 from models.models import Product, User, ProductStatus
 from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate
 
+import logging
+
 router = APIRouter(prefix="/products", tags=["Products"])
 
 
@@ -46,6 +48,7 @@ def create_product(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+
     """Create a new product. Only sellers can create products."""
     if not current_user.is_seller:
         raise HTTPException(status_code=403, detail="Only sellers can create products")

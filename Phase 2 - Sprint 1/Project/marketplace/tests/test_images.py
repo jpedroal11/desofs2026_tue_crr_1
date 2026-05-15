@@ -253,7 +253,7 @@ class TestAuthorization:
         # Create a second seller
         other_seller = UserModel(
             email="other@example.com", username="other_seller",
-            hashed_password="hashed", is_seller=True,
+            hashed_password="hashed",
         )
         db_session.add(other_seller)
         db_session.commit()

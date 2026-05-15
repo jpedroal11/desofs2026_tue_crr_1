@@ -4,17 +4,24 @@ from datetime import datetime
 from models.models import OrderStatus, ProductStatus
 
 
+class RoleResponse(BaseModel):
+    id: int
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 # ── User Schemas ──────────────────────────────────────────────────────────────
 
 class UserBase(BaseModel):
     email: EmailStr
     username: str
     full_name: Optional[str] = None
-    is_seller: bool = False
 
 
 class UserCreate(UserBase):
     password: str
+    roles: Optional[List[str]] = None
 
     @field_validator("password")
     @classmethod
@@ -26,7 +33,6 @@ class UserCreate(UserBase):
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
-    is_seller: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
@@ -34,6 +40,7 @@ class UserResponse(UserBase):
     id: int
     is_active: bool
     created_at: datetime
+    roles: List[RoleResponse] = []
 
     model_config = {"from_attributes": True}
 

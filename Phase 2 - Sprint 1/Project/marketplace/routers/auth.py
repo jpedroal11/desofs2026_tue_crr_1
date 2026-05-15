@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from core.dependencies import get_db, hash_password, verify_password, create_access_token, get_current_user
-from models.models import User
+from models.models import User, Role
 from schemas.schemas import UserCreate, UserResponse, Token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -21,9 +21,21 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         email=user_in.email,
         username=user_in.username,
         full_name=user_in.full_name,
-        is_seller=user_in.is_seller,
         hashed_password=hash_password(user_in.password),
     )
+    # assign roles if provided
+    if getattr(user_in, "roles", None):
+        roles_objs = []
+        for rname in user_in.roles:
+            norm = rname.strip().title()
+            role = db.query(Role).filter(Role.name == norm).first()
+            if not role:
+                role = Role(name=norm)
+                db.add(role)
+                db.flush()
+            roles_objs.append(role)
+        user.roles = roles_objs
+
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -43,7 +55,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 
-    token = create_access_token({"sub": user.id})
+    token = create_access_token({"sub": user.username})
     return {"access_token": token, "token_type": "bearer"}
 
 

@@ -1,10 +1,25 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Enum, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Enum, Text, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import enum
 
 Base = declarative_base()
+
+user_roles_table = Table(
+    "user_roles",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), nullable=False, unique=True)
+    users = relationship("User", secondary=user_roles_table, back_populates="roles")
 
 
 class OrderStatus(str, enum.Enum):
@@ -31,11 +46,26 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
-    is_seller = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     products = relationship("Product", back_populates="seller")
     orders = relationship("Order", back_populates="buyer")
+    roles = relationship("Role", secondary=user_roles_table, back_populates="users")
+
+    @property
+    def is_seller(self) -> bool:
+        return any(role.name.lower() == "seller" for role in self.roles)
+
+    @property
+    def is_admin(self) -> bool:
+        return any(role.name.lower() == "administrator" for role in self.roles)
+
+    @property
+    def is_buyer(self) -> bool:
+        return any(role.name.lower() == "buyer" for role in self.roles)
+
+    def has_role(self, role_name: str) -> bool:
+        return any(role.name.lower() == role_name.lower() for role in self.roles)
 
 
 class Product(Base):

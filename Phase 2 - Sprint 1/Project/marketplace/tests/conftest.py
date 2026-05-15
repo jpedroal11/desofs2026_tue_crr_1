@@ -54,7 +54,7 @@ def client(db_session):
 
 @pytest.fixture
 def seller_user(db_session):
-    user = User(email="seller@example.com", username="seller", hashed_password="hashed_password", is_seller=True)
+    user = User(email="seller@example.com", username="seller", hashed_password="hashed_password")
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -62,7 +62,7 @@ def seller_user(db_session):
 
 @pytest.fixture
 def buyer_user(db_session):
-    user = User(email="buyer@example.com", username="buyer", hashed_password="hashed_password", is_seller=False)
+    user = User(email="buyer@example.com", username="buyer", hashed_password="hashed_password")
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)

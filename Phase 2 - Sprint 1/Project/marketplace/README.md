@@ -98,7 +98,7 @@ export DATABASE_URL="postgresql://user:password@localhost/marketplace"
 # 1. Register a seller
 curl -X POST http://localhost:8000/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email":"seller@shop.com","username":"seller1","password":"secret123","is_seller":true}'
+  -d '{"email":"seller@shop.com","username":"seller1","password":"secret123"}'
 
 # 2. Login
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
