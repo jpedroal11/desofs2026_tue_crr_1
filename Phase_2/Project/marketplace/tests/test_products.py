@@ -1,6 +1,6 @@
 import pytest
 from main import app
-from core.dependencies import get_current_user
+from middleware.auth import get_current_user
 from models.models import ProductStatus
 
 def authenticate_as(client, user):

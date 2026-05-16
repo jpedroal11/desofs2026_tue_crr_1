@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 from main import app
-from core.dependencies import get_current_user
+from middleware.auth import get_current_user
 from core import image_service
 
 

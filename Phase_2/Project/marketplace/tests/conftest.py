@@ -1,47 +1,59 @@
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+"""Shared test fixtures.
 
-import sys
+Every test gets:
+  - A fresh in-memory SQLite database (so tests are isolated)
+  - A FastAPI TestClient pointed at it
+
+Required env vars (SECRET_KEY, DATABASE_URL) are set here BEFORE any app
+imports — get_settings() is @lru_cached.
+"""
+
 import os
+import sys
 
-# Ensure the marketplace directory is in the Python path
+# ── Set env BEFORE any app imports ────────────────────────────────────────────
+
+os.environ.setdefault(
+    "SECRET_KEY",
+    "test-secret-key-do-not-use-in-prod-min-32-bytes",
+)
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("APP_ENV", "test")
+
+# Ensure the marketplace directory is on the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+import pytest
+from fastapi.testclient import TestClient
+
 from main import app
-from core.dependencies import get_db, get_current_user
-from models.models import Base, User
+from core.dependencies import SessionLocal, engine, get_db
+from middleware.auth import get_current_user
+import models.models  # noqa: F401 — registers all tables with Base.metadata
+from models.models import Base, Role, User
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_db():
+@pytest.fixture(autouse=True)
+def fresh_db():
+    """Drop and recreate every table before each test."""
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=engine)
+
 
 @pytest.fixture
 def db_session():
-    # clean db for each test
-    for table in reversed(Base.metadata.sorted_tables):
-        with engine.connect() as conn:
-            conn.execute(table.delete())
-            conn.commit()
-
-    db = TestingSessionLocal()
+    """Direct DB session for tests that bypass the API."""
+    db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
+
 @pytest.fixture
 def client(db_session):
+    """FastAPI test client — overrides ``get_db`` to use the test session."""
     def override_get_db():
         try:
             yield db_session
@@ -52,22 +64,47 @@ def client(db_session):
     yield TestClient(app)
     app.dependency_overrides.clear()
 
+
+# ── User fixtures with proper roles ───────────────────────────────────────────
+
+def _ensure_role(db, name: str) -> Role:
+    role = db.query(Role).filter(Role.name == name).first()
+    if role is None:
+        role = Role(name=name)
+        db.add(role)
+        db.flush()
+    return role
+
+
 @pytest.fixture
 def seller_user(db_session):
-    user = User(email="seller@example.com", username="seller", hashed_password="hashed_password")
+    user = User(
+        email="seller@example.com",
+        username="seller",
+        hashed_password="hashed_password",
+    )
+    user.roles = [_ensure_role(db_session, "Seller")]
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
     return user
+
 
 @pytest.fixture
 def buyer_user(db_session):
-    user = User(email="buyer@example.com", username="buyer", hashed_password="hashed_password")
+    user = User(
+        email="buyer@example.com",
+        username="buyer",
+        hashed_password="hashed_password",
+    )
+    user.roles = [_ensure_role(db_session, "Buyer")]
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
     return user
 
+
+# ── Image upload isolation (existing test_images.py depends on this) ──────────
 
 @pytest.fixture(autouse=True)
 def tmp_upload_dir(tmp_path, monkeypatch):
@@ -82,10 +119,6 @@ def tmp_upload_dir(tmp_path, monkeypatch):
 # ── Minimal valid image byte helpers ──────────────────────────────────────────
 
 def _minimal_jpeg() -> bytes:
-    """Return bytes for the smallest valid JPEG (a 1x1 white pixel)."""
-    import struct
-    # Minimal JFIF: SOI + APP0 + DQT + SOF0 + DHT + SOS + image data + EOI
-    # This is the smallest valid JPEG that most parsers accept.
     return bytes.fromhex(
         "ffd8ffe000104a46494600010100000100010000"
         "ffdb004300080606070605080707070909080a0c"
@@ -101,7 +134,6 @@ def _minimal_jpeg() -> bytes:
 
 
 def _minimal_png() -> bytes:
-    """Return bytes for a minimal valid 1x1 white PNG."""
     import struct
     import zlib
 
@@ -111,22 +143,21 @@ def _minimal_png() -> bytes:
         c = chunk_type + data
         return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
 
-    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)  # 1x1, 8-bit RGB
-    raw_row = b"\x00\xff\xff\xff"  # filter byte + RGB
+    ihdr_data = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    raw_row = b"\x00\xff\xff\xff"
     idat_data = zlib.compress(raw_row)
 
     return signature + _chunk(b"IHDR", ihdr_data) + _chunk(b"IDAT", idat_data) + _chunk(b"IEND", b"")
 
 
 def _minimal_gif() -> bytes:
-    """Return bytes for a minimal valid GIF89a."""
     return (
-        b"GIF89a"  # Header
-        b"\x01\x00\x01\x00"  # 1x1
-        b"\x00\x00\x00"  # No GCT
-        b"\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00"  # Image descriptor
-        b"\x02\x02\x44\x01\x00"  # LZW min code size + data
-        b"\x3b"  # Trailer
+        b"GIF89a"
+        b"\x01\x00\x01\x00"
+        b"\x00\x00\x00"
+        b"\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00"
+        b"\x02\x02\x44\x01\x00"
+        b"\x3b"
     )
 
 
@@ -134,9 +165,11 @@ def _minimal_gif() -> bytes:
 def jpeg_bytes():
     return _minimal_jpeg()
 
+
 @pytest.fixture
 def png_bytes():
     return _minimal_png()
+
 
 @pytest.fixture
 def gif_bytes():
