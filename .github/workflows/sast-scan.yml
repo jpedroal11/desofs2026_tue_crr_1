@@ -26,7 +26,7 @@ jobs:
 
       - name: Run Bandit
         run: |
-          bandit --recursive marketplace/ --severity-level medium --confidence-level medium --format json --output bandit-report.json --exclude marketplace/__pycache__ || true   # don't fail the step so we can upload the report
+          bandit --recursive Phase_2/Project/marketplace/ --severity-level medium --confidence-level medium --format json --output bandit-report.json --exclude marketplace/__pycache__ || true   # don't fail the step so we can upload the report
 
       - name: Upload Bandit report
         uses: actions/upload-artifact@v4
@@ -37,7 +37,7 @@ jobs:
 
       - name: Fail on high-severity issues
         run: |
-          bandit --recursive marketplace/ --severity-level high --confidence-level high --exclude marketplace/__pycache__
+          bandit --recursive Phase_2/Project/marketplace/ --severity-level high --confidence-level high --exclude marketplace/__pycache__
 
   semgrep:
     name: Semgrep SAST Scan
@@ -51,7 +51,7 @@ jobs:
 
       - name: Run Semgrep
         run: |
-          semgrep --config "p/python" --config "p/flask" --config "p/owasp-top-ten" --config "p/secrets" --json --output semgrep-report.json marketplace/ run.py || true
+          semgrep --config "p/python" --config "p/flask" --config "p/owasp-top-ten" --config "p/secrets" --json --output semgrep-report.json Phase_2/Project/marketplace/ run.py || true
 
       - name: Upload Semgrep report
         uses: actions/upload-artifact@v4
@@ -62,4 +62,4 @@ jobs:
 
       - name: Fail on blocking findings
         run: |
-          semgrep --config "p/python" --config "p/flask" --config "p/owasp-top-ten" --config "p/secrets" --error marketplace/  run.py
+          semgrep --config "p/python" --config "p/flask" --config "p/owasp-top-ten" --config "p/secrets" --error Phase_2/Project/marketplace/  run.py
