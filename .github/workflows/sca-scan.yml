@@ -1,4 +1,13 @@
-pip-audit:
+name: SCA Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pip-audit:
     name: pip-audit CVE Scan
     runs-on: ubuntu-latest
 
