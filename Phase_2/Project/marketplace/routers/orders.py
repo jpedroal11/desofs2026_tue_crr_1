@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
-from core.dependencies import get_db, get_current_user
+from core.dependencies import get_db
+from middleware.auth import get_current_user
 from models.models import Order, OrderItem, Product, User
 from schemas.schemas import OrderCreate, OrderUpdate, OrderResponse
 

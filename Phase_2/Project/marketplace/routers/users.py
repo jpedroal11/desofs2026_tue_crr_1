@@ -1,8 +1,10 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
-from core.dependencies import get_db, get_current_user
+from core.dependencies import get_db
+from middleware.auth import get_current_user
 from models.models import User
 from schemas.schemas import UserResponse, UserUpdate
 
@@ -16,7 +18,7 @@ def list_users(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
+def get_user(user_id: uuid.UUID, db: Session = Depends(get_db)):
     """Get a user by ID."""
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
@@ -26,7 +28,7 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/{user_id}", response_model=UserResponse)
 def update_user(
-    user_id: int,
+    user_id: uuid.UUID,
     user_in: UserUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -49,7 +51,7 @@ def update_user(
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

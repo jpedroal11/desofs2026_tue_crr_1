@@ -1,8 +1,10 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from core.dependencies import get_db, get_current_user
+from core.dependencies import get_db
+from middleware.auth import get_current_user
 from models.models import Product, User, ProductStatus
 from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate
 
@@ -17,7 +19,7 @@ def list_products(
     limit: int = 20,
     min_price: Optional[float] = Query(None),
     max_price: Optional[float] = Query(None),
-    seller_id: Optional[int] = Query(None),
+    seller_id: Optional[uuid.UUID] = Query(None),
     db: Session = Depends(get_db),
 ):
     """List available products with optional filters."""

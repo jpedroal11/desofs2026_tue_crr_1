@@ -3,7 +3,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 
-from core.dependencies import get_db, get_current_user
+from core.dependencies import get_db
+from middleware.auth import get_current_user
 from core import image_service
 from models.models import Product, ProductImage, User
 from schemas.schemas import ProductImageResponse
