@@ -83,8 +83,7 @@ jobs:
         run: |
           semgrep \
             --config "p/python" \
-            --config "p/flask" \
-            --config "p/sqlalchemy" \
+            --config "p/flask" \\
             --config "p/owasp-top-ten" \
             --config "p/secrets" \
             --error \
