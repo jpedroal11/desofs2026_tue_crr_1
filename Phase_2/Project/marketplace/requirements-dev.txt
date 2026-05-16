@@ -1,0 +1,12 @@
+# Dev / CI dependencies — install with: pip install -r requirements-dev.txt
+-r requirements.txt
+
+# SBOM generation
+cyclonedx-bom>=4.0.0
+
+# SAST
+bandit[toml]
+
+# Testing
+pytest>=8.0.0
+httpx>=0.27.0

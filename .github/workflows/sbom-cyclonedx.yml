@@ -1,0 +1,82 @@
+name: SBOM Generation (CycloneDX)
+
+on:
+  push:
+    branches: ["main", "develop"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main", "develop"]
+  workflow_dispatch:
+
+permissions:
+  contents: write          # needed for release asset upload
+
+jobs:
+  sbom:
+    name: Generate CycloneDX SBOM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Create virtual environment & install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r marketplace/requirements.txt
+
+      - name: Generate requirements lock file
+        run: |
+          source .venv/bin/activate
+          pip freeze --exclude-editable > requirements-lock.txt
+
+      - name: Install CycloneDX
+        run: |
+          source .venv/bin/activate
+          pip install cyclonedx-bom
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          source .venv/bin/activate
+          cyclonedx-py environment \
+            --of JSON \
+            -o sbom-cyclonedx.json \
+            --output-reproducible \
+            .venv
+
+      - name: Validate SBOM
+        run: |
+          python -c "
+          import json
+          sbom = json.load(open('sbom-cyclonedx.json'))
+          assert sbom.get('bomFormat') == 'CycloneDX', 'Invalid bomFormat'
+          assert 'components' in sbom, 'No components found'
+          names = [c['name'].lower() for c in sbom['components']]
+          for dep in ['fastapi', 'uvicorn', 'sqlalchemy', 'pydantic']:
+              assert dep in names, f'{dep} missing from SBOM'
+          print(f'SBOM valid - {len(sbom[\"components\"])} components found')
+          "
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: |
+            sbom-cyclonedx.json
+            requirements-lock.txt
+          retention-days: 90
+
+      - name: Attach SBOM to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom-cyclonedx.json
+            requirements-lock.txt
