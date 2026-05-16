@@ -1,12 +1,9 @@
--- Work in progress
+-- Marketplace database schema.
 
--- Create database
-CREATE DATABASE marketplace_db;
+-- Required for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Connect to the new database (run in psql)
---\c marketplace_db;
-
--- Create enum types
+-- Enum types
 CREATE TYPE order_status AS ENUM (
     'pending',
     'confirmed',
@@ -21,29 +18,35 @@ CREATE TYPE product_status AS ENUM (
     'archived'
 );
 
+-- Roles
 CREATE TABLE roles (
     id SERIAL PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE
 );
 
--- Users table
+-- Users (UUID PKs — never leak user count via incrementing IDs)
 CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) NOT NULL UNIQUE,
     username VARCHAR(255) NOT NULL UNIQUE,
     hashed_password VARCHAR(255) NOT NULL,
     full_name VARCHAR(255),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_users_email ON users(email);
+
 CREATE TABLE user_roles (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     PRIMARY KEY (user_id, role_id)
 );
 
--- Products table
+-- Products
 CREATE TABLE products (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -51,17 +54,18 @@ CREATE TABLE products (
     price DOUBLE PRECISION NOT NULL,
     stock INTEGER NOT NULL DEFAULT 0,
     status product_status NOT NULL DEFAULT 'draft',
-    seller_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    seller_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_products_name ON products(name);
+CREATE INDEX idx_products_seller ON products(seller_id);
 
--- Orders table
+-- Orders
 CREATE TABLE orders (
     id SERIAL PRIMARY KEY,
-    buyer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    buyer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status order_status NOT NULL DEFAULT 'pending',
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     shipping_address TEXT,
@@ -69,7 +73,9 @@ CREATE TABLE orders (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Order items table
+CREATE INDEX idx_orders_buyer ON orders(buyer_id);
+
+-- Order items
 CREATE TABLE order_items (
     id SERIAL PRIMARY KEY,
     order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -78,7 +84,7 @@ CREATE TABLE order_items (
     unit_price DOUBLE PRECISION NOT NULL
 );
 
--- Product images table
+-- Product images
 CREATE TABLE product_images (
     id SERIAL PRIMARY KEY,
     product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -90,5 +96,26 @@ CREATE TABLE product_images (
     uploaded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
+-- Token blacklist (revoked JWTs by jti)
+CREATE TABLE token_blacklist (
+    jti VARCHAR(64) PRIMARY KEY,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    revoked_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_token_blacklist_expires ON token_blacklist(expires_at);
+
+-- Password reset tokens (SHA-256 hashed, single-use, 30-min TTL)
+CREATE TABLE password_reset_tokens (
+    token_hash VARCHAR(64) PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    used_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_password_reset_user ON password_reset_tokens(user_id);
+
+-- Seed roles
 INSERT INTO roles (name)
 VALUES ('Administrator'), ('Seller'), ('Buyer');

@@ -1,15 +1,35 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Enum, Text, Table
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Table,
+    Text,
+    Uuid,
+)
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.sql import func
 import enum
 
 Base = declarative_base()
 
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 user_roles_table = Table(
     "user_roles",
     Base.metadata,
-    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
     Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
 )
 
@@ -36,17 +56,22 @@ class ProductStatus(str, enum.Enum):
     archived = "archived"
 
 
-
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    full_name = Column(String, nullable=True)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    username = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Lockout state (5 failed attempts -> 15-minute lock)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     products = relationship("Product", back_populates="seller")
     orders = relationship("Order", back_populates="buyer")
@@ -77,9 +102,9 @@ class Product(Base):
     price = Column(Float, nullable=False)
     stock = Column(Integer, default=0)
     status = Column(Enum(ProductStatus), default=ProductStatus.draft)
-    seller_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    seller_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     seller = relationship("User", back_populates="products")
     order_items = relationship("OrderItem", back_populates="product")
@@ -90,12 +115,12 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    buyer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    buyer_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.pending)
     total_amount = Column(Float, default=0.0)
     shipping_address = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     buyer = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
@@ -119,11 +144,41 @@ class ProductImage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    filename = Column(String, unique=True, nullable=False)       # UUID-based filename on disk
-    original_filename = Column(String, nullable=False)            # Sanitized original name
+    filename = Column(String, unique=True, nullable=False)
+    original_filename = Column(String, nullable=False)
     mime_type = Column(String, nullable=False)
-    file_size = Column(Integer, nullable=False)                   # bytes
+    file_size = Column(Integer, nullable=False)
     sha256_hash = Column(String(64), nullable=False)
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime(timezone=True), default=_utcnow)
 
     product = relationship("Product", back_populates="images")
+
+
+# ── Auth-related tables (owned by Pedro Leal — Sprint 1 user aggregate) ──────
+
+class TokenBlacklist(Base):
+    """Revoked JWT IDs. Checked on every authenticated request.
+
+    A periodic job should delete rows where expires_at < now().
+    """
+    __tablename__ = "token_blacklist"
+
+    jti = Column(String(64), primary_key=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class PasswordResetToken(Base):
+    """Single-use, 30-minute password-reset tokens.
+
+    Only the SHA-256 hash of the token is stored — the raw token never
+    persists. The user receives the raw token via email (or, in dev, in the
+    HTTP response of /auth/password-reset/request).
+    """
+    __tablename__ = "password_reset_tokens"
+
+    token_hash = Column(String(64), primary_key=True)
+    user_id = Column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
