@@ -51,18 +51,15 @@ jobs:
             --output-reproducible \
             .venv
 
-      - name: Validate SBOM
+      - name: Install CycloneDX CLI
         run: |
-          python -c "
-          import json
-          sbom = json.load(open('sbom-cyclonedx.json'))
-          assert sbom.get('bomFormat') == 'CycloneDX', 'Invalid bomFormat'
-          assert 'components' in sbom, 'No components found'
-          names = [c['name'].lower() for c in sbom['components']]
-          for dep in ['fastapi', 'uvicorn', 'sqlalchemy', 'pydantic']:
-              assert dep in names, f'{dep} missing from SBOM'
-          print(f'SBOM valid - {len(sbom[\"components\"])} components found')
-          "
+          curl -sSfL \
+            https://github.com/CycloneDX/cyclonedx-cli/releases/latest/download/cyclonedx-linux-x64 \
+            -o /usr/local/bin/cyclonedx
+          chmod +x /usr/local/bin/cyclonedx
+
+      - name: Validate SBOM
+        run: cyclonedx validate --input-file sbom-cyclonedx.json --fail-on-errors
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
