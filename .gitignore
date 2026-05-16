@@ -1,2 +1,5 @@
 # Ignore all Python compiled files
 *.pyc
+*.log
+
+.env

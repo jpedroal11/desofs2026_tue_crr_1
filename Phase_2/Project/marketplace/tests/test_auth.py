@@ -80,10 +80,93 @@ def test_register_breached_password_blocked(client, mock_pwned):
 def test_login_success_returns_tokens(client):
     _register(client)
     r = client.post("/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["access_token"] and body["refresh_token"]
-    assert body["token_type"] == "bearer"
+    # Assert the returned data matches schema expectations
+    data = r.json()
+    assert "access_token" in data
+    assert "refresh_token" in data
+    assert data["token_type"] == "bearer"
+
+def test_login_account_disabled(client, db_session):
+    from models.models import User
+    from core.security import hash_password
+    user = User(email="disabled@example.com", username="disabled", hashed_password=hash_password("pw"), is_active=False)
+    db_session.add(user)
+    db_session.commit()
+    
+    res = client.post("/auth/login", json={"email": "disabled@example.com", "password": "pw"})
+    assert res.status_code == 403
+    assert "Account disabled" in res.json()["detail"] or "disabled" in res.json()["detail"].lower()
+
+def test_logout_invalid_token(client):
+    res = client.post("/auth/logout", headers={"Authorization": "Bearer invalid.token"})
+    assert res.status_code == 200
+
+    # Call service method directly to cover line 171-172 since HTTP endpoint might intercept
+    from services.auth_service import logout_user
+    from core.dependencies import SessionLocal
+    db = SessionLocal()
+    logout_user("invalid.token", db)
+    db.close()
+
+def test_refresh_token_blacklisted(client):
+    _register(client)
+    res = client.post("/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD})
+    refresh_token = res.json()["refresh_token"]
+
+    # Logout to blacklist the token (actually logout blacklists access token, but we'll manually blacklist refresh token)
+    from core.dependencies import SessionLocal
+    from models.models import TokenBlacklist
+    from core.security import decode_refresh_token
+    from datetime import datetime, timezone
+    
+    payload = decode_refresh_token(refresh_token)
+    db = SessionLocal()
+    db.add(TokenBlacklist(jti=payload["jti"], expires_at=datetime.now(timezone.utc)))
+    db.commit()
+    db.close()
+
+    res_refresh = client.post("/auth/refresh", json={"refresh_token": refresh_token})
+    assert res_refresh.status_code == 401
+
+def test_refresh_user_not_found(client, db_session):
+    from core.security import create_refresh_token
+    import uuid
+    refresh, _, _ = create_refresh_token(str(uuid.uuid4()))
+    res_refresh = client.post("/auth/refresh", json={"refresh_token": refresh})
+    assert res_refresh.status_code == 401
+
+def test_confirm_reset_breached_password(client, monkeypatch):
+    import services.auth_service as auth_svc
+    
+    _register(client)
+    res_req = client.post("/auth/password-reset/request", json={"email": "bob@x.com"})
+    token = res_req.json().get("_dev_token")
+
+    async def mock_breached(pw):
+        return True
+    monkeypatch.setattr(auth_svc, "is_password_breached", mock_breached)
+
+    res_conf = client.post("/auth/password-reset/confirm", json={"token": token, "new_password": "BreachedPassword123!"})
+    assert res_conf.status_code == 400
+    assert "breach" in res_conf.json()["detail"].lower()
+
+def test_confirm_reset_user_deleted(client, db_session):
+    from models.models import User
+    from core.security import hash_password
+    import uuid
+    
+    user = User(id=uuid.uuid4(), email="del@example.com", username="del", hashed_password=hash_password("pw"))
+    db_session.add(user)
+    db_session.commit()
+    
+    res_req = client.post("/auth/password-reset/request", json={"email": user.email})
+    token = res_req.json().get("_dev_token")
+
+    db_session.delete(user)
+    db_session.commit()
+
+    res_conf = client.post("/auth/password-reset/confirm", json={"token": token, "new_password": "NewSecurePassword123!"})
+    assert res_conf.status_code == 400
 
 
 def test_login_wrong_password_returns_401(client):

@@ -312,3 +312,76 @@ class TestListImages:
         res = client.get(f"/products/{product_id}/images")
         assert res.status_code == 200
         assert len(res.json()) == 2
+
+class TestImageExceptions:
+    def test_upload_image_product_not_found(self, client, seller_user, jpeg_bytes):
+        authenticate_as(client, seller_user)
+        files = {"file": ("photo.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        res = client.post("/products/9999/images", files=files)
+        assert res.status_code == 404
+        clear_auth(client)
+
+    def test_upload_image_save_value_error(self, client, seller_user, jpeg_bytes, monkeypatch):
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("photo.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        
+        def mock_save(*args, **kwargs):
+            raise ValueError("Mock value error")
+        monkeypatch.setattr(image_service, "save_file", mock_save)
+        
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 400
+        assert res.json()["detail"] == "Mock value error"
+        clear_auth(client)
+
+    def test_upload_image_save_os_error(self, client, seller_user, jpeg_bytes, monkeypatch):
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("photo.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        
+        def mock_save(*args, **kwargs):
+            raise OSError("Mock OS error")
+        monkeypatch.setattr(image_service, "save_file", mock_save)
+        
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 500
+        assert "Mock OS error" in res.json()["detail"]
+        clear_auth(client)
+
+    def test_serve_image_value_error(self, client, monkeypatch):
+        def mock_build(*args, **kwargs):
+            raise ValueError("Mock bad path")
+        monkeypatch.setattr(image_service, "build_safe_path", mock_build)
+        
+        res = client.get("/images/test.jpg")
+        assert res.status_code == 400
+
+    def test_list_product_images_404(self, client):
+        res = client.get("/products/9999/images")
+        assert res.status_code == 404
+
+    def test_delete_product_image_404_product(self, client, seller_user):
+        authenticate_as(client, seller_user)
+        res = client.delete("/products/9999/images/1")
+        assert res.status_code == 404
+        clear_auth(client)
+
+    def test_delete_product_image_404_image(self, client, seller_user):
+        product_id = _create_product(client, seller_user)
+        res = client.delete(f"/products/{product_id}/images/9999")
+        assert res.status_code == 404
+        clear_auth(client)
+
+    def test_delete_product_image_os_error(self, client, seller_user, jpeg_bytes, monkeypatch):
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("del_test.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        image_id = res.json()["id"]
+
+        def mock_delete(*args, **kwargs):
+            raise OSError("Mock OS error")
+        monkeypatch.setattr(image_service, "delete_file", mock_delete)
+        
+        # It should pass (error is ignored)
+        del_res = client.delete(f"/products/{product_id}/images/{image_id}")
+        assert del_res.status_code == 204
+        clear_auth(client)

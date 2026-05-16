@@ -4,7 +4,7 @@ from typing import List
 
 from core.dependencies import get_db
 from middleware.auth import get_current_user
-from models.models import Order, OrderItem, Product, User
+from models.models import Order, OrderItem, Product, User, ProductStatus
 from schemas.schemas import OrderCreate, OrderUpdate, OrderResponse
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
@@ -58,7 +58,7 @@ def create_order(
     for item_in in order_in.items:
         product = db.query(Product).filter(
             Product.id == item_in.product_id,
-            Product.is_active == True,
+            Product.status == ProductStatus.active,
         ).first()
 
         if not product:
