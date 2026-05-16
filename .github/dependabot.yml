@@ -22,7 +22,7 @@ updates:
 
   # GitHub Actions dependencies
   - package-ecosystem: "github-actions"
-    directory: "/Phase_2/Project/marketplace"
+    directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
