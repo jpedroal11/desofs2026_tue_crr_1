@@ -1,65 +1,121 @@
+"""Auth routes. Each route:
+  1. Receives a validated request (Pydantic handles structure + password rules)
+  2. Calls services/auth_service
+  3. Maps service exceptions to HTTP status codes
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from core.dependencies import get_db, hash_password, verify_password, create_access_token, get_current_user
-from models.models import User, Role
-from schemas.schemas import UserCreate, UserResponse, Token
+from core.dependencies import get_db
+from middleware.auth import get_current_user
+from models.models import User
+from schemas.schemas import (
+    AccessTokenResponse,
+    LoginRequest,
+    MessageResponse,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RefreshRequest,
+    TokenResponse,
+    UserCreate,
+    UserResponse,
+)
+from services import auth_service as svc
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+_bearer = HTTPBearer(auto_error=True)
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(user_in: UserCreate, db: Session = Depends(get_db)):
-    """Register a new user."""
-    if db.query(User).filter(User.email == user_in.email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
-    if db.query(User).filter(User.username == user_in.username).first():
-        raise HTTPException(status_code=400, detail="Username already taken")
 
-    user = User(
-        email=user_in.email,
-        username=user_in.username,
-        full_name=user_in.full_name,
-        hashed_password=hash_password(user_in.password),
-    )
-    # assign roles if provided
-    if getattr(user_in, "roles", None):
-        roles_objs = []
-        for rname in user_in.roles:
-            norm = rname.strip().title()
-            role = db.query(Role).filter(Role.name == norm).first()
-            if not role:
-                role = Role(name=norm)
-                db.add(role)
-                db.flush()
-            roles_objs.append(role)
-        user.roles = roles_objs
-
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(data: UserCreate, db: Session = Depends(get_db)):
+    try:
+        user = await svc.register_user(data, db)
+    except svc.EmailAlreadyRegistered:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    except svc.UsernameAlreadyTaken:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Username already taken")
+    except svc.BreachedPassword:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This password has appeared in a known data breach. Please choose a different one.",
+        )
     return user
 
 
-@router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """Login and receive a JWT access token."""
-    user = db.query(User).filter(User.username == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+@router.post("/login", response_model=TokenResponse)
+def login(data: LoginRequest, db: Session = Depends(get_db)):
+    try:
+        tokens = svc.login_user(data, db)
+    except svc.AccountLocked:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            status.HTTP_423_LOCKED,
+            f"Account temporarily locked due to repeated failed logins. "
+            f"Try again in {svc.LOCKOUT_MINUTES} minutes.",
         )
-    if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
+    except svc.AccountDisabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is disabled")
+    except svc.InvalidCredentials:
+        # Same generic 401 for wrong-password and unknown-email — no enumeration
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+    return TokenResponse(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+    )
 
-    token = create_access_token({"sub": user.username})
-    return {"access_token": token, "token_type": "bearer"}
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    db: Session = Depends(get_db),
+):
+    svc.logout_user(credentials.credentials, db)
+    return MessageResponse(message="Logged out")
+
+
+@router.post("/refresh", response_model=AccessTokenResponse)
+def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
+    try:
+        access = svc.refresh_access_token(data.refresh_token, db)
+    except svc.InvalidToken:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
+    return AccessTokenResponse(access_token=access)
+
+
+@router.post("/password-reset/request")
+def password_reset_request(data: PasswordResetRequest, db: Session = Depends(get_db)):
+    """Always returns the same response — never reveals whether the email is
+    registered. NOTE: in production the token is emailed; here we surface it
+    in the response for development. REMOVE the _dev_token field before any
+    non-dev deployment.
+    """
+    raw_token = svc.request_password_reset(data.email, db)
+    response = {"message": "If that email is registered, a reset link has been sent."}
+    if raw_token:
+        response["_dev_token"] = raw_token
+    return response
+
+
+@router.post("/password-reset/confirm", response_model=MessageResponse)
+async def password_reset_confirm(data: PasswordResetConfirm, db: Session = Depends(get_db)):
+    try:
+        await svc.confirm_password_reset(data.token, data.new_password, db)
+    except svc.InvalidToken:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired token")
+    except svc.BreachedPassword:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This password has appeared in a known data breach. Please choose a different one.",
+        )
+    return MessageResponse(message="Password updated successfully")
 
 
 @router.get("/me", response_model=UserResponse)
 def get_me(current_user: User = Depends(get_current_user)):
-    """Get the currently authenticated user."""
     return current_user

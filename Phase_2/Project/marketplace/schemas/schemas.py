@@ -1,7 +1,27 @@
-from pydantic import BaseModel, EmailStr, field_validator
+import uuid
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 from models.models import OrderStatus, ProductStatus
+
+
+# ── Password policy (shared by register + reset) ──────────────────────────────
+
+def _validate_password_strength(v: str) -> str:
+    errors = []
+    if len(v) < 12:
+        errors.append("at least 12 characters")
+    if not any(c.isupper() for c in v):
+        errors.append("one uppercase letter")
+    if not any(c.islower() for c in v):
+        errors.append("one lowercase letter")
+    if not any(c.isdigit() for c in v):
+        errors.append("one digit")
+    if not any(c in "!@#$%^&*()_+-=[]{}|;':\",./<>?" for c in v):
+        errors.append("one special character")
+    if errors:
+        raise ValueError(f"Password must contain: {', '.join(errors)}")
+    return v
 
 
 class RoleResponse(BaseModel):
@@ -20,15 +40,13 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(min_length=12, max_length=128)
     roles: Optional[List[str]] = None
 
     @field_validator("password")
     @classmethod
-    def password_strength(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
+    def _check_password(cls, v: str) -> str:
+        return _validate_password_strength(v)
 
 
 class UserUpdate(BaseModel):
@@ -37,7 +55,7 @@ class UserUpdate(BaseModel):
 
 
 class UserResponse(UserBase):
-    id: int
+    id: uuid.UUID
     is_active: bool
     created_at: datetime
     roles: List[RoleResponse] = []
@@ -110,7 +128,7 @@ class ProductImageResponse(BaseModel):
 class ProductResponse(ProductBase):
     id: int
     status: ProductStatus
-    seller_id: int
+    seller_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
     images: List[ProductImageResponse] = []
@@ -153,7 +171,7 @@ class OrderUpdate(BaseModel):
 
 class OrderResponse(BaseModel):
     id: int
-    buyer_id: int
+    buyer_id: uuid.UUID
     status: OrderStatus
     total_amount: float
     shipping_address: Optional[str]
@@ -166,10 +184,50 @@ class OrderResponse(BaseModel):
 
 # ── Auth Schemas ──────────────────────────────────────────────────────────────
 
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str = Field(min_length=12, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def _check_password(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class AccessTokenResponse(BaseModel):
+    """Returned by /refresh — only a new access token, refresh stays the same."""
+    access_token: str
+    token_type: str = "bearer"
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+# Legacy alias — kept for any code that still imports `Token` from before.
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
 
 class TokenData(BaseModel):
-    user_id: Optional[int] = None
+    user_id: Optional[uuid.UUID] = None
