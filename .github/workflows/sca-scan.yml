@@ -26,7 +26,7 @@ jobs:
       - name: Run pip-audit
         run: |
           pip-audit \
-            --requirement /Phase_2/Project/marketplace/requirements.txt \
+            --requirement /Phase_2/Project/marketplace/ \
             --format json \
             --output pip-audit-report.json \
             || true
@@ -39,4 +39,4 @@ jobs:
           retention-days: 14
 
       - name: Fail on any CVE
-        run: pip-audit --requirement /Phase_2/Project/marketplace/requirements.txt
+        run: pip-audit --requirement /Phase_2/Project/marketplace/
