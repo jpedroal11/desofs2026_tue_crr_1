@@ -22,6 +22,7 @@ from jwt.exceptions import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from core.config import get_settings
+from core.roles import UserRole
 from core.security import (
     create_access_token,
     create_refresh_token,
@@ -51,7 +52,8 @@ RESET_TOKEN_EXPIRE_MINUTES = 30
 # when the email is not registered (defends against enumeration via timing).
 DUMMY_BCRYPT_HASH = "$2b$12$KIXGhKMaGXkOHRLCkCHBtOFf5DqkWGqNlEkUBBMCL5LoV7vd9SiKi"
 
-DEFAULT_ROLE_NAME = "Buyer"
+DEFAULT_ROLE_NAME = UserRole.BUYER.value
+ADMINISTRATOR_ROLE_NAME = UserRole.ADMIN.value
 
 
 @dataclass
@@ -91,10 +93,12 @@ class AccountDisabled(AuthError):
 class InvalidToken(AuthError):
     pass
 
+class RoleNotAllowed(AuthError):
+    pass
 
 # ── Registration ──────────────────────────────────────────────────────────────
 
-async def register_user(data: UserCreate, db: Session) -> User:
+async def register_user(data: UserCreate, db: Session, allow_admin: bool = False) -> User:
     if db.query(User).filter(User.email == data.email).first():
         raise EmailAlreadyRegistered()
     if db.query(User).filter(User.username == data.username).first():
@@ -103,6 +107,10 @@ async def register_user(data: UserCreate, db: Session) -> User:
     if await is_password_breached(data.password):
         raise BreachedPassword()
 
+    role_names = data.roles or [DEFAULT_ROLE_NAME]
+    if not allow_admin and any(name.strip().lower() == ADMINISTRATOR_ROLE_NAME.lower() for name in role_names):
+        raise RoleNotAllowed()
+
     user = User(
         email=data.email,
         username=data.username,
@@ -110,7 +118,6 @@ async def register_user(data: UserCreate, db: Session) -> User:
         hashed_password=hash_password(data.password),
     )
 
-    role_names = data.roles or [DEFAULT_ROLE_NAME]
     user.roles = _resolve_roles(role_names, db)
 
     db.add(user)

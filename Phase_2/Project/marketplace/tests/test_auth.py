@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from models.models import PasswordResetToken, User
+from models.models import PasswordResetToken, User, Role
 
 
 GOOD_PASSWORD = "Str0ng!Password123"
@@ -73,6 +73,89 @@ def test_register_breached_password_blocked(client, mock_pwned):
     r = _register(client)
     assert r.status_code == 400
     assert "breach" in r.json()["detail"].lower()
+
+
+def test_register_administrator_role_forbidden(client):
+    r = client.post(
+        "/auth/register",
+        json={
+            "email": "admin@example.com",
+            "username": "admin",
+            "full_name": "Admin User",
+            "password": GOOD_PASSWORD,
+            "roles": ["Administrator"],
+        },
+    )
+    assert r.status_code == 403
+    assert "administrator" in r.json()["detail"].lower()
+
+
+def test_admin_register_allows_admin_when_admin(client, db_session):
+    from core.security import hash_password
+
+    admin = User(
+        email="admin@example.com",
+        username="admin",
+        hashed_password=hash_password(GOOD_PASSWORD),
+    )
+    admin.roles = [Role(name="Administrator")]
+    db_session.add(admin)
+    db_session.commit()
+
+    login_res = client.post(
+        "/auth/login",
+        json={"email": "admin@example.com", "password": GOOD_PASSWORD},
+    )
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+
+    r = client.post(
+        "/auth/user/register",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "email": "newadmin@example.com",
+            "username": "newadmin",
+            "full_name": "New Admin",
+            "password": GOOD_PASSWORD,
+            "roles": ["Administrator"],
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert any(role["name"] == "Administrator" for role in r.json()["roles"])
+
+
+def test_admin_register_forbidden_for_non_admin(client, db_session):
+    from core.security import hash_password
+
+    user = User(
+        email="user@example.com",
+        username="user",
+        hashed_password=hash_password(GOOD_PASSWORD),
+    )
+    user.roles = [Role(name="Buyer")]
+    db_session.add(user)
+    db_session.commit()
+
+    login_res = client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": GOOD_PASSWORD},
+    )
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+
+    r = client.post(
+        "/auth/user/register",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "email": "anotheradmin@example.com",
+            "username": "anotheradmin",
+            "full_name": "Another Admin",
+            "password": GOOD_PASSWORD,
+            "roles": ["Administrator"],
+        },
+    )
+    assert r.status_code == 403
+    assert "insufficient" in r.json()["detail"].lower()
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────

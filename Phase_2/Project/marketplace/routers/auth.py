@@ -9,7 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from core.dependencies import get_db
-from middleware.auth import get_current_user
+from middleware.auth import get_current_user, require_admin
 from models.models import User
 from schemas.schemas import (
     AccessTokenResponse,
@@ -37,6 +37,32 @@ _bearer = HTTPBearer(auto_error=True)
 async def register(data: UserCreate, db: Session = Depends(get_db)):
     try:
         user = await svc.register_user(data, db)
+    except svc.EmailAlreadyRegistered:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    except svc.UsernameAlreadyTaken:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Username already taken")
+    except svc.BreachedPassword:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This password has appeared in a known data breach. Please choose a different one.",
+        )
+    except svc.RoleNotAllowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Registration with the Administrator role is not permitted.",
+        )
+    return user
+
+
+@router.post(
+    "/user/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+async def register_admin(data: UserCreate, db: Session = Depends(get_db)):
+    try:
+        user = await svc.register_user(data, db, allow_admin=True)
     except svc.EmailAlreadyRegistered:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
     except svc.UsernameAlreadyTaken:
