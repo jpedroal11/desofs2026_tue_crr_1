@@ -1,6 +1,6 @@
 # Ignore all Python compiled files
 *.pyc
 *.log
-
+*.sqlite3
 .env
 *.db
