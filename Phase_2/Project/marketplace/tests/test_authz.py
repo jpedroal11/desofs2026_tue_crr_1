@@ -33,6 +33,9 @@ class TestIDOR:
         )
         # Either rejected outright or field silently ignored
         if response.status_code == 200:
-            assert response.json()["role"] != "ADMIN"
+            assert all(
+                role.get("name") != "ADMIN"
+                for role in response.json().get("roles", [])
+            )
         else:
             assert response.status_code == 403

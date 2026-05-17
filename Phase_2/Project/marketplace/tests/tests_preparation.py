@@ -180,6 +180,7 @@ def seed_data(modules):
 
         delivered_order = Order(
             buyer_id=buyer_a.id,
+            seller_id=seller_a.id,
             status=OrderStatus.delivered,
             total_amount=float(active_product.price),
             shipping_address="123 Test St, Porto, PT",
@@ -197,6 +198,7 @@ def seed_data(modules):
 
         buyer_b_order = Order(
             buyer_id=buyer_b.id,
+            seller_id=seller_b.id,
             status=OrderStatus.pending,
             total_amount=float(seller_b_product.price),
             shipping_address="456 Other St, Lisbon, PT",

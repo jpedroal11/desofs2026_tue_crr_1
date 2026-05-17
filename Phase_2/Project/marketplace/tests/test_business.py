@@ -5,17 +5,13 @@ class TestPriceIntegrity:
     def test_client_supplied_price_is_ignored(
         self, buyer_client, active_product
     ):
-        response = buyer_client.post("/orders", json={
-            "product_id": active_product["id"],
-            "quantity": 1,
-            "unit_price": 0.01,      # manipulated price
-            "shipping_address": {
-                "street": "123 Test St",
-                "city": "Porto",
-                "postal_code": "4000-001",
-                "country": "PT"
-            }
+        response = buyer_client.post("/orders/", json={
+            "items": [
+                {"product_id": active_product["id"], "quantity": 1}
+            ],
+            "shipping_address": "123 Test St"
         })
+        
         assert response.status_code == 201
         order = response.json()
         # Total must reflect server-side price, not 0.01

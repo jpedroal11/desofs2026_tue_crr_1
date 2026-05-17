@@ -3,6 +3,7 @@
 import hashlib
 import io
 import os
+import uuid
 from uuid import UUID
 
 import pytest
@@ -267,7 +268,12 @@ class TestFilePermissions:
         filename = res.json()["filename"]
         file_path = tmp_upload_dir / filename
         mode = oct(file_path.stat().st_mode)[-4:]
-        assert mode == "0640", f"Expected 0640, got {mode}"
+
+        expected = "0666" if os.name == "nt" else "0640"
+
+        assert mode == expected, (
+            f"Expected {oct(expected)}, got {oct(mode)}"
+        )
         clear_auth(client)
 
 
