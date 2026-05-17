@@ -1,4 +1,4 @@
-import uuid
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -36,7 +36,7 @@ def list_products(
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
-def get_product(product_id: int, db: Session = Depends(get_db)):
+def get_product(product_id: UUID, db: Session = Depends(get_db)):
     """Get a product by ID."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
@@ -64,7 +64,7 @@ def create_product(
 
 @router.patch("/{product_id}", response_model=ProductResponse)
 def update_product(
-    product_id: int,
+    product_id: UUID,
     product_in: ProductUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -86,7 +86,7 @@ def update_product(
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_product(
-    product_id: int,
+    product_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -103,7 +103,7 @@ def delete_product(
 
 @router.patch("/{product_id}/status", response_model=ProductResponse)
 def update_product_status(
-    product_id: int,
+    product_id: UUID,
     status_update: ProductStatusUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -123,7 +123,7 @@ def update_product_status(
 
 @router.post("/{product_id}/stock/add", response_model=ProductResponse)
 def add_product_stock(
-    product_id: int,
+    product_id: UUID,
     adjustment: StockAdjustment,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -143,7 +143,7 @@ def add_product_stock(
 
 @router.post("/{product_id}/stock/reduce", response_model=ProductResponse)
 def reduce_product_stock(
-    product_id: int,
+    product_id: UUID,
     adjustment: StockAdjustment,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
