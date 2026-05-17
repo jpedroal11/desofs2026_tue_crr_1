@@ -25,5 +25,11 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
+# Create non-root user
+RUN useradd -m appuser && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
 # Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]
