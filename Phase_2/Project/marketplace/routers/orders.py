@@ -1,15 +1,20 @@
 from uuid import UUID
+import os
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session, selectinload
 from typing import List
 
 from core.dependencies import get_db
 from middleware.auth import get_current_user
-from models.models import Order, OrderItem, Product, User, ProductStatus
+from models.models import Order, OrderItem, Product, User, ProductStatus, OrderStatus
 from schemas.schemas import OrderCreate, OrderUpdate, OrderResponse
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
+logger = logging.getLogger(__name__)
 
 @router.get("/", response_model=List[OrderResponse])
 def list_my_orders(
@@ -35,7 +40,12 @@ def get_order(
     current_user: User = Depends(get_current_user),
 ):
     """Get a specific order. Only the buyer can view their order."""
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = (
+        db.query(Order)
+        .options(selectinload(Order.items).selectinload(OrderItem.product))
+        .filter(Order.id == order_id)
+        .first()
+    )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.buyer_id != current_user.id:
@@ -49,12 +59,16 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Place a new order. Validates stock and deducts inventory atomically."""
+    """Place a new order. Validates stock and deducts inventory atomically.
+    
+    All items in the order must be from the same seller.
+    """
     if not order_in.items:
         raise HTTPException(status_code=400, detail="Order must have at least one item")
 
     order_items = []
     total = 0.0
+    seller_id = None
 
     for item_in in order_in.items:
         product = db.query(Product).filter(
@@ -67,6 +81,16 @@ def create_order(
                 status_code=404,
                 detail=f"Product {item_in.product_id} not found or unavailable",
             )
+        
+        # Ensure all items are from the same seller
+        if seller_id is None:
+            seller_id = product.seller_id
+        elif seller_id != product.seller_id:
+            raise HTTPException(
+                status_code=400,
+                detail="All products in an order must be from the same seller",
+            )
+        
         if product.stock < item_in.quantity:
             raise HTTPException(
                 status_code=400,
@@ -87,6 +111,7 @@ def create_order(
 
     order = Order(
         buyer_id=current_user.id,
+        seller_id=seller_id,
         shipping_address=order_in.shipping_address,
         total_amount=round(total, 2),
         items=order_items,
@@ -105,18 +130,77 @@ def update_order(
     current_user: User = Depends(get_current_user),
 ):
     """Update an order's status or shipping address. Only the buyer can update."""
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = (
+        db.query(Order)
+        .options(selectinload(Order.items).selectinload(OrderItem.product))
+        .filter(Order.id == order_id)
+        .first()
+    )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    if order.buyer_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not allowed to update this order")
+    order_seller_ids = {
+        item.product.seller_id for item in order.items if item.product is not None
+    }
+    buyer_can_update = order.buyer_id == current_user.id
+    seller_can_update_status = current_user.is_admin or current_user.id in order_seller_ids
+
+    for field, value in order_in.model_dump(exclude_unset=True).items():
+        if field == "status":
+            if not seller_can_update_status:
+                raise HTTPException(status_code=403, detail="Not allowed to change order status")
+        elif field == "shipping_address":
+            if not buyer_can_update or order.status != OrderStatus.pending:
+                raise HTTPException(status_code=403, detail="Shipping address can only be updated while order is pending")
+        else:
+            raise HTTPException(status_code=400, detail=f"Cannot update field '{field}'")
+
+    old_status = order.status
 
     for field, value in order_in.model_dump(exclude_unset=True).items():
         setattr(order, field, value)
 
     db.commit()
     db.refresh(order)
+
+    # Generate invoice when order becomes confirmed
+    try:
+        from services.invoice_service import generate_invoice_pdf
+
+        if old_status != OrderStatus.confirmed and order.status == OrderStatus.confirmed:
+            generate_invoice_pdf(order, db)
+    except Exception:
+        pass
+
     return order
+
+
+
+@router.get("/{order_id}/invoice")
+def download_invoice(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Download invoice PDF for an order. Buyers can download their own invoices; admins can download any."""
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if not (current_user.is_admin or order.buyer_id == current_user.id):
+        raise HTTPException(status_code=403, detail="Not allowed to download this invoice")
+
+    from services.invoice_service import invoice_path_for_order, generate_invoice_pdf
+
+    path = invoice_path_for_order(order)
+    if not os.path.exists(path):
+        try:
+            generate_invoice_pdf(order, db)
+            path = invoice_path_for_order(order)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to generate invoice")
+
+    filename = os.path.basename(path)
+    return FileResponse(path, media_type="application/pdf", filename=filename)
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)

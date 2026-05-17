@@ -172,6 +172,7 @@ class OrderUpdate(BaseModel):
 class OrderResponse(BaseModel):
     id: UUID
     buyer_id: UUID
+    seller_id: UUID
     status: OrderStatus
     total_amount: float
     shipping_address: Optional[str]

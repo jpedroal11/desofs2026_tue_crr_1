@@ -74,7 +74,8 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     products = relationship("Product", back_populates="seller")
-    orders = relationship("Order", back_populates="buyer")
+    orders = relationship("Order", foreign_keys="Order.buyer_id", back_populates="buyer")
+    orders_as_seller = relationship("Order", foreign_keys="Order.seller_id", viewonly=True)
     roles = relationship("Role", secondary=user_roles_table, back_populates="users")
 
     @property
@@ -116,14 +117,17 @@ class Order(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     buyer_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
+    seller_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.pending)
     total_amount = Column(Float, default=0.0)
     shipping_address = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
-    buyer = relationship("User", back_populates="orders")
+    buyer = relationship("User", foreign_keys=[buyer_id], back_populates="orders")
+    seller = relationship("User", foreign_keys=[seller_id], viewonly=True)
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    invoice_filename = Column(String(200), nullable=True)
 
 
 class OrderItem(Base):
