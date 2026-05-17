@@ -30,7 +30,7 @@ jobs:
           python -m venv .venv
           source .venv/bin/activate
           pip install --upgrade pip
-          pip install -r "Development/Phase_2/Project/marketplace/requirements.txt"
+          pip install -r "Deliverables/Phase_2/Project/marketplace/requirements.txt"
 
       - name: Generate requirements lock file
         run: |
