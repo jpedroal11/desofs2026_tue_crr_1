@@ -28,7 +28,7 @@ async def is_password_breached(password: str) -> bool:
     # SHA-1 is mandated by the HIBP API protocol (k-anonymity range query).
     # It is NOT used for password storage — that is bcrypt, in core.security.
     # nosemgrep
-    sha1 = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
+    sha1 = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()  # nosec B324 - required by HIBP API protocol
     prefix, suffix = sha1[:5], sha1[5:]
 
     try:
