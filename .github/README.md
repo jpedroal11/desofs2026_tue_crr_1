@@ -13,7 +13,7 @@ Automated testing and Docker image deployment pipeline:
   - Runs pytest with coverage reporting on Python 3.11
   - Tests located in `Phase_2/Project/marketplace/tests/`
   - Generates XML coverage report and uploads as artifact (14-day retention)
-  - Fail-fast on test failures to block deployments with broken code
+  - Deploy job blocked on test failure via `needs: test` dependency
 
 - **Deploy Job** (runs after test passes)
   - Only triggers on successful pushes to `main` branch
