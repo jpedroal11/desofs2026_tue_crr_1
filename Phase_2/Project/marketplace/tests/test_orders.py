@@ -1,6 +1,7 @@
 import pytest
 from main import app
 from middleware.auth import get_current_user
+from models import models
 
 def authenticate_as(client, user):
     app.dependency_overrides[get_current_user] = lambda: user
@@ -120,6 +121,100 @@ def test_update_order(client, seller_user, buyer_user):
     res_patch = client.patch(f"/orders/{order_id}", json={"shipping_address": "New Address"})
     assert res_patch.status_code == 200
     assert res_patch.json()["shipping_address"] == "New Address"
+    clear_auth(client)
+
+
+def test_only_seller_can_change_order_status(client, seller_user, buyer_user):
+    # Setup order from buyer and seller
+    authenticate_as(client, seller_user)
+    res = client.post("/products/", json={"name": "P6", "price": 10.0, "stock": 5})
+    p6_id = res.json()["id"]
+    client.patch(f"/products/{p6_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    authenticate_as(client, buyer_user)
+    res = client.post("/orders/", json={"shipping_address": "A", "items": [{"product_id": p6_id, "quantity": 1}]})
+    order_id = res.json()["id"]
+    clear_auth(client)
+
+    # Buyer cannot change status
+    authenticate_as(client, buyer_user)
+    res_buyer_status = client.patch(f"/orders/{order_id}", json={"status": "shipped"})
+    assert res_buyer_status.status_code == 403
+    clear_auth(client)
+
+    # Seller can change status for their product order
+    authenticate_as(client, seller_user)
+    res_seller_status = client.patch(f"/orders/{order_id}", json={"status": "shipped"})
+    assert res_seller_status.status_code == 200
+    assert res_seller_status.json()["status"] == "shipped"
+    clear_auth(client)
+
+
+def test_shipping_address_only_editable_while_pending(client, seller_user, buyer_user):
+    # Setup order
+    authenticate_as(client, seller_user)
+    res = client.post("/products/", json={"name": "P7", "price": 10.0, "stock": 5})
+    p7_id = res.json()["id"]
+    client.patch(f"/products/{p7_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    authenticate_as(client, buyer_user)
+    res = client.post("/orders/", json={"shipping_address": "Start", "items": [{"product_id": p7_id, "quantity": 1}]})
+    order_id = res.json()["id"]
+    clear_auth(client)
+
+    # Seller marks order as shipped
+    authenticate_as(client, seller_user)
+    res_seller_status = client.patch(f"/orders/{order_id}", json={"status": "shipped"})
+    assert res_seller_status.status_code == 200
+    clear_auth(client)
+
+    # Buyer tries to update shipping address -> forbidden
+    authenticate_as(client, buyer_user)
+    res_buyer_patch = client.patch(f"/orders/{order_id}", json={"shipping_address": "New Addr"})
+    assert res_buyer_patch.status_code == 403
+    clear_auth(client)
+
+
+def test_order_cannot_span_multiple_sellers(client, seller_user, buyer_user, db_session):
+    """Ensure an order can only contain products from a single seller."""
+    # Create seller B
+    seller_b = User(
+        email="seller_b@example.com",
+        username="seller_b",
+        hashed_password="hashed_password",
+    )
+    seller_b.roles = [db_session.query(models.models.Role).filter(models.models.Role.name == "Seller").first()]
+    db_session.add(seller_b)
+    db_session.commit()
+    db_session.refresh(seller_b)
+
+    # Create products from seller A and seller B
+    authenticate_as(client, seller_user)
+    res_a = client.post("/products/", json={"name": "A1", "price": 10.0, "stock": 5})
+    p_a_id = res_a.json()["id"]
+    client.patch(f"/products/{p_a_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    authenticate_as(client, seller_b)
+    res_b = client.post("/products/", json={"name": "B1", "price": 20.0, "stock": 5})
+    p_b_id = res_b.json()["id"]
+    client.patch(f"/products/{p_b_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    # Buyer tries to order from both sellers -> should fail
+    authenticate_as(client, buyer_user)
+    payload = {
+        "shipping_address": "123 Main St",
+        "items": [
+            {"product_id": p_a_id, "quantity": 1},
+            {"product_id": p_b_id, "quantity": 1}
+        ]
+    }
+    res = client.post("/orders/", json=payload)
+    assert res.status_code == 400
+    assert "same seller" in res.json()["detail"].lower()
     clear_auth(client)
 
 def test_cancel_order(client, seller_user, buyer_user):

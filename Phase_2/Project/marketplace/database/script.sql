@@ -66,14 +66,17 @@ CREATE INDEX idx_products_seller ON products(seller_id);
 CREATE TABLE orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     buyer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    seller_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status order_status NOT NULL DEFAULT 'pending',
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     shipping_address TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    invoice_filename VARCHAR(200) NULL
 );
 
 CREATE INDEX idx_orders_buyer ON orders(buyer_id);
+CREATE INDEX idx_orders_seller ON orders(seller_id);
 
 -- Order items
 CREATE TABLE order_items (

@@ -12,3 +12,6 @@ psycopg2-binary>=2.9.12
 
 # Dev / test
 pytest>=8.0.0
+
+# PDF generation for invoices
+reportlab>=3.6.12
