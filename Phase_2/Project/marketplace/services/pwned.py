@@ -27,7 +27,8 @@ USER_AGENT = "SecureMarket-DESOFS/1.0"
 async def is_password_breached(password: str) -> bool:
     # SHA-1 is mandated by the HIBP API protocol (k-anonymity range query).
     # It is NOT used for password storage — that is bcrypt, in core.security.
-    sha1 = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()  # nosec B324 - required by HIBP API protocol
+    # nosemgrep
+    sha1 = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
 
     try:
