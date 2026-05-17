@@ -19,7 +19,7 @@ def list_products(
     limit: int = 20,
     min_price: Optional[float] = Query(None),
     max_price: Optional[float] = Query(None),
-    seller_id: Optional[uuid.UUID] = Query(None),
+    seller_id: Optional[UUID] = Query(None),
     db: Session = Depends(get_db),
 ):
     """List available products with optional filters."""
@@ -86,7 +86,7 @@ def update_product(
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_product(
-    product_id: uuid.UUID,
+    product_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

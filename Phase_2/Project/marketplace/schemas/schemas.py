@@ -55,7 +55,7 @@ class UserUpdate(BaseModel):
 
 
 class UserResponse(UserBase):
-    id: uuid.UUID
+    id: UUID
     is_active: bool
     created_at: datetime
     roles: List[RoleResponse] = []
@@ -128,7 +128,7 @@ class ProductImageResponse(BaseModel):
 class ProductResponse(ProductBase):
     id: UUID
     status: ProductStatus
-    seller_id: uuid.UUID
+    seller_id: UUID
     created_at: datetime
     updated_at: datetime
     images: List[ProductImageResponse] = []
@@ -170,8 +170,8 @@ class OrderUpdate(BaseModel):
 
 
 class OrderResponse(BaseModel):
-    id: uuid.UUID
-    buyer_id: uuid.UUID
+    id: UUID
+    buyer_id: UUID
     status: OrderStatus
     total_amount: float
     shipping_address: Optional[str]
@@ -230,4 +230,4 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    user_id: Optional[uuid.UUID] = None
+    user_id: Optional[UUID] = None
