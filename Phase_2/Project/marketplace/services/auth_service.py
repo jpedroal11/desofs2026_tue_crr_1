@@ -50,7 +50,8 @@ RESET_TOKEN_EXPIRE_MINUTES = 30
 
 # Real bcrypt hash that nothing matches — used to keep login timing constant
 # when the email is not registered (defends against enumeration via timing).
-DUMMY_BCRYPT_HASH = "$2b$12$KIXGhKMaGXkOHRLCkCHBtOFf5DqkWGqNlEkUBBMCL5LoV7vd9SiKi"  # nosec B105 - dummy hash for timing attack prevention
+# nosemgrep
+DUMMY_BCRYPT_HASH = "$2b$12$KIXGhKMaGXkOHRLCkCHBtOFf5DqkWGqNlEkUBBMCL5LoV7vd9SiKi"  # nosec B105
 
 DEFAULT_ROLE_NAME = UserRole.BUYER.value
 ADMINISTRATOR_ROLE_NAME = UserRole.ADMIN.value
