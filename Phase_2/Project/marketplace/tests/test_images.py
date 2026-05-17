@@ -97,33 +97,76 @@ class TestUploadValidationFailures:
         assert "not allowed" in res.json()["detail"].lower()
         clear_auth(client)
 
-    def test_reject_oversized_file(self, client, seller_user, monkeypatch):
-        """Files exceeding MAX_FILE_SIZE must be rejected."""
+    def test_upload_rejects_file_over_10mb(self, client, seller_user):
         product_id = _create_product(client, seller_user)
-        # Temporarily lower the limit for this test
-        monkeypatch.setattr(image_service, "MAX_FILE_SIZE", 100)
-        big_content = b"\xff\xd8\xff" + b"\x00" * 200  # JPEG header + junk
+        # Create a file of 10 MB + 1 byte
+        big_content = b"a" * (10 * 1024 * 1024 + 1)
         files = {"file": ("big.jpg", io.BytesIO(big_content), "image/jpeg")}
         res = client.post(f"/products/{product_id}/images", files=files)
-        assert res.status_code == 400
-        assert "exceeds" in res.json()["detail"].lower()
+        assert res.status_code == 422
+        assert "exceeds maximum allowed size of 10 MB" in res.json()["detail"]
         clear_auth(client)
 
-    def test_reject_too_many_images(self, client, seller_user, jpeg_bytes, monkeypatch):
-        """Exceeding MAX_IMAGES_PER_PRODUCT must be rejected."""
-        monkeypatch.setattr(image_service, "MAX_IMAGES_PER_PRODUCT", 2)
+    def test_upload_rejects_at_10_images(self, client, seller_user, db_session, jpeg_bytes):
+        from models.models import ProductImage
         product_id = _create_product(client, seller_user)
-
-        for i in range(2):
-            files = {"file": (f"img{i}.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
-            res = client.post(f"/products/{product_id}/images", files=files)
-            assert res.status_code == 201
-
-        # Third upload should fail
+        
+        # Create 10 existing image records in DB
+        for i in range(10):
+            img = ProductImage(
+                product_id=product_id,
+                filename=f"test_{i}.jpg",
+                original_filename=f"test_{i}.jpg",
+                mime_type="image/jpeg",
+                file_size=1024,
+                sha256_hash="dummy"
+            )
+            db_session.add(img)
+        db_session.commit()
+        
+        authenticate_as(client, seller_user)
         files = {"file": ("img_extra.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
         res = client.post(f"/products/{product_id}/images", files=files)
         assert res.status_code == 400
-        assert "maximum" in res.json()["detail"].lower()
+        assert "Maximum number of images per product reached (10)" in res.json()["detail"]
+        clear_auth(client)
+
+    def test_upload_rejects_when_quota_exceeded(self, client, seller_user, jpeg_bytes, monkeypatch):
+        product_id = _create_product(client, seller_user)
+        from repositories import image_repository
+        monkeypatch.setattr(image_repository, "total_storage_by_seller", lambda *args: 200 * 1024 * 1024)
+        
+        files = {"file": ("quota.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 400
+        assert "Storage quota exceeded. Maximum 200 MB per seller." in res.json()["detail"]
+        clear_auth(client)
+
+    def test_upload_succeeds_just_under_quota(self, client, seller_user, jpeg_bytes, monkeypatch):
+        product_id = _create_product(client, seller_user)
+        from repositories import image_repository
+        
+        half_mb = int(0.5 * 1024 * 1024)
+        mock_storage = 199 * 1024 * 1024
+        monkeypatch.setattr(image_repository, "total_storage_by_seller", lambda *args: mock_storage)
+        
+        padded_jpeg = jpeg_bytes[:-2] + b"\x00" * (half_mb - len(jpeg_bytes)) + b"\xff\xd9"
+        files = {"file": ("under_quota.jpg", io.BytesIO(padded_jpeg), "image/jpeg")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 201
+        clear_auth(client)
+
+    def test_file_size_bytes_persisted(self, client, seller_user, jpeg_bytes, db_session):
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("persisted.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 201
+        
+        from models.models import ProductImage
+        image_id = res.json()["id"]
+        db_img = db_session.query(ProductImage).filter_by(id=image_id).first()
+        assert db_img is not None
+        assert db_img.file_size == len(jpeg_bytes)
         clear_auth(client)
 
 

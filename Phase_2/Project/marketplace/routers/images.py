@@ -8,6 +8,7 @@ from middleware.auth import get_current_user
 from core import image_service
 from models.models import Product, ProductImage, User
 from schemas.schemas import ProductImageResponse
+from services import image_use_case
 
 router = APIRouter(tags=["Images"])
 
@@ -24,68 +25,25 @@ def upload_product_image(
     current_user: User = Depends(get_current_user),
 ):
     """Upload an image for a product. Only the product owner (seller) can upload."""
-    # ── Ownership check ───────────────────────────────────────────────────
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-    if product.seller_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Not allowed to upload images for this product"
-        )
-
-    # ── Image count limit ─────────────────────────────────────────────────
-    current_count = (
-        db.query(ProductImage).filter(ProductImage.product_id == product_id).count()
-    )
-    if current_count >= image_service.MAX_IMAGES_PER_PRODUCT:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Product already has the maximum of "
-            f"{image_service.MAX_IMAGES_PER_PRODUCT} images",
-        )
-
+    
     # ── Read content ──────────────────────────────────────────────────────
     content = file.file.read()
 
-    # ── Validation pipeline ───────────────────────────────────────────────
-    try:
-        image_service.validate_file_size(content)
-        image_service.validate_mime_type(file.content_type)
-        detected_mime = image_service.validate_magic_bytes(content)
-        image_service.validate_content_type_matches(file.content_type, detected_mime)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # ── Generate safe filename & hash ─────────────────────────────────────
-    uuid_filename = image_service.generate_uuid_filename(detected_mime)
-    sha256_hash = image_service.compute_sha256(content)
-    original_name = image_service.sanitize_original_filename(file.filename or "unknown")
-
-    # ── Persist to disk ───────────────────────────────────────────────────
-    try:
-        safe_path = image_service.build_safe_path(uuid_filename)
-        image_service.save_file(content, safe_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except OSError as exc:
+    # ── File size limit (10MB) before any other processing ────────────────
+    if len(content) > 10 * 1024 * 1024:
         raise HTTPException(
-            status_code=500, detail=f"Failed to save image: {exc}"
+            status_code=422,
+            detail="File exceeds maximum allowed size of 10 MB"
         )
-
-    # ── Persist metadata to DB ────────────────────────────────────────────
-    db_image = ProductImage(
+        
+    return image_use_case.upload_product_image(
+        db=db,
         product_id=product_id,
-        filename=uuid_filename,
-        original_filename=original_name,
-        mime_type=detected_mime,
-        file_size=len(content),
-        sha256_hash=sha256_hash,
+        current_user=current_user,
+        file_content=content,
+        filename=file.filename,
+        content_type=file.content_type,
     )
-    db.add(db_image)
-    db.commit()
-    db.refresh(db_image)
-
-    return db_image
 
 
 @router.get("/images/{filename}")
