@@ -46,9 +46,9 @@ CREATE TABLE user_roles (
     PRIMARY KEY (user_id, role_id)
 );
 
--- Products
+-- Products 
 CREATE TABLE products (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     description TEXT,
     price DOUBLE PRECISION NOT NULL,
@@ -64,7 +64,7 @@ CREATE INDEX idx_products_seller ON products(seller_id);
 
 -- Orders
 CREATE TABLE orders (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     buyer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status order_status NOT NULL DEFAULT 'pending',
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,
@@ -77,17 +77,17 @@ CREATE INDEX idx_orders_buyer ON orders(buyer_id);
 
 -- Order items
 CREATE TABLE order_items (
-    id SERIAL PRIMARY KEY,
-    order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     unit_price DOUBLE PRECISION NOT NULL
 );
 
 -- Product images
 CREATE TABLE product_images (
-    id SERIAL PRIMARY KEY,
-    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     filename VARCHAR(255) NOT NULL UNIQUE,
     original_filename VARCHAR(255) NOT NULL,
     mime_type VARCHAR(255) NOT NULL,

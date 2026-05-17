@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -19,7 +20,7 @@ router = APIRouter(tags=["Images"])
     status_code=status.HTTP_201_CREATED,
 )
 def upload_product_image(
-    product_id: int,
+    product_id: UUID,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -70,7 +71,7 @@ def serve_image(filename: str):
     "/products/{product_id}/images",
     response_model=List[ProductImageResponse],
 )
-def list_product_images(product_id: int, db: Session = Depends(get_db)):
+def list_product_images(product_id: UUID, db: Session = Depends(get_db)):
     """List all images for a product."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
@@ -88,8 +89,8 @@ def list_product_images(product_id: int, db: Session = Depends(get_db)):
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_product_image(
-    product_id: int,
-    image_id: int,
+    product_id: UUID,
+    image_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

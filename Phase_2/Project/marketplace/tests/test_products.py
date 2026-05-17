@@ -157,7 +157,7 @@ def test_update_product(client, seller_user, buyer_user):
 
     # Not found
     authenticate_as(client, seller_user)
-    res_404 = client.patch("/products/9999", json={"name": "P_bad"})
+    res_404 = client.patch("/products/00000000-0000-0000-0000-000000000000", json={"name": "P_bad"})
     assert res_404.status_code == 404
     clear_auth(client)
 
@@ -175,7 +175,7 @@ def test_delete_product_forbidden_404(client, seller_user, buyer_user):
 
     # Not found
     authenticate_as(client, seller_user)
-    res_404 = client.delete("/products/9999")
+    res_404 = client.delete("/products/00000000-0000-0000-0000-000000000000")
     assert res_404.status_code == 404
     clear_auth(client)
 
@@ -190,7 +190,7 @@ def test_update_product_status_forbidden_404(client, seller_user, buyer_user):
     clear_auth(client)
 
     authenticate_as(client, seller_user)
-    assert client.patch("/products/9999/status", json={"status": "active"}).status_code == 404
+    assert client.patch("/products/00000000-0000-0000-0000-000000000000/status", json={"status": "active"}).status_code == 404
     clear_auth(client)
 
 def test_stock_add_forbidden_404(client, seller_user, buyer_user):
@@ -204,7 +204,7 @@ def test_stock_add_forbidden_404(client, seller_user, buyer_user):
     clear_auth(client)
 
     authenticate_as(client, seller_user)
-    assert client.post("/products/9999/stock/add", json={"quantity": 1}).status_code == 404
+    assert client.post("/products/00000000-0000-0000-0000-000000000000/stock/add", json={"quantity": 1}).status_code == 404
     clear_auth(client)
 
 def test_stock_reduce_forbidden_404(client, seller_user, buyer_user):
@@ -218,5 +218,5 @@ def test_stock_reduce_forbidden_404(client, seller_user, buyer_user):
     clear_auth(client)
 
     authenticate_as(client, seller_user)
-    assert client.post("/products/9999/stock/reduce", json={"quantity": 1}).status_code == 404
+    assert client.post("/products/00000000-0000-0000-0000-000000000000/stock/reduce", json={"quantity": 1}).status_code == 404
     clear_auth(client)

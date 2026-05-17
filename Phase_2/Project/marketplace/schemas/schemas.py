@@ -1,4 +1,4 @@
-import uuid
+from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
@@ -114,7 +114,7 @@ class StockAdjustment(BaseModel):
 
 
 class ProductImageResponse(BaseModel):
-    id: int
+    id: UUID
     filename: str
     original_filename: str
     mime_type: str
@@ -126,7 +126,7 @@ class ProductImageResponse(BaseModel):
 
 
 class ProductResponse(ProductBase):
-    id: int
+    id: UUID
     status: ProductStatus
     seller_id: uuid.UUID
     created_at: datetime
@@ -139,7 +139,7 @@ class ProductResponse(ProductBase):
 # ── Order Schemas ─────────────────────────────────────────────────────────────
 
 class OrderItemCreate(BaseModel):
-    product_id: int
+    product_id: UUID
     quantity: int
 
     @field_validator("quantity")
@@ -151,8 +151,8 @@ class OrderItemCreate(BaseModel):
 
 
 class OrderItemResponse(BaseModel):
-    id: int
-    product_id: int
+    id: UUID
+    product_id: UUID
     quantity: int
     unit_price: float
 
@@ -170,7 +170,7 @@ class OrderUpdate(BaseModel):
 
 
 class OrderResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     buyer_id: uuid.UUID
     status: OrderStatus
     total_amount: float

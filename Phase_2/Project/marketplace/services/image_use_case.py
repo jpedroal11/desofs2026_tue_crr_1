@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from models.models import Product, User, ProductImage
@@ -6,7 +7,7 @@ from repositories import image_repository
 
 def upload_product_image(
     db: Session,
-    product_id: int,
+    product_id: UUID,
     current_user: User,
     file_content: bytes,
     filename: str,

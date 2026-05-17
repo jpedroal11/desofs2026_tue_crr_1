@@ -96,7 +96,7 @@ class User(Base):
 class Product(Base):
     __tablename__ = "products"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     name = Column(String, index=True, nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Float, nullable=False)
@@ -114,7 +114,7 @@ class Product(Base):
 class Order(Base):
     __tablename__ = "orders"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     buyer_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.pending)
     total_amount = Column(Float, default=0.0)
@@ -129,9 +129,9 @@ class Order(Base):
 class OrderItem(Base):
     __tablename__ = "order_items"
 
-    id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    order_id = Column(Uuid, ForeignKey("orders.id"), nullable=False)
+    product_id = Column(Uuid, ForeignKey("products.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Float, nullable=False)
 
@@ -142,8 +142,8 @@ class OrderItem(Base):
 class ProductImage(Base):
     __tablename__ = "product_images"
 
-    id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    product_id = Column(Uuid, ForeignKey("products.id"), nullable=False)
     filename = Column(String, unique=True, nullable=False)
     original_filename = Column(String, nullable=False)
     mime_type = Column(String, nullable=False)

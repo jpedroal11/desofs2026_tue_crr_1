@@ -1,3 +1,4 @@
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -29,7 +30,7 @@ def list_my_orders(
 
 @router.get("/{order_id}", response_model=OrderResponse)
 def get_order(
-    order_id: int,
+    order_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -98,7 +99,7 @@ def create_order(
 
 @router.patch("/{order_id}", response_model=OrderResponse)
 def update_order(
-    order_id: int,
+    order_id: UUID,
     order_in: OrderUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -120,7 +121,7 @@ def update_order(
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 def cancel_order(
-    order_id: int,
+    order_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

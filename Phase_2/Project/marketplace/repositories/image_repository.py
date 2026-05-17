@@ -1,12 +1,12 @@
-import uuid
+from uuid import UUID
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from models.models import ProductImage, Product
 
-def count_by_product(db: Session, product_id: int) -> int:
+def count_by_product(db: Session, product_id: UUID) -> int:
     return db.query(ProductImage).filter(ProductImage.product_id == product_id).count()
 
-def total_storage_by_seller(db: Session, seller_id: uuid.UUID) -> int:
+def total_storage_by_seller(db: Session, seller_id: UUID) -> int:
     result = (
         db.query(func.coalesce(func.sum(ProductImage.file_size), 0))
         .join(Product, ProductImage.product_id == Product.id)

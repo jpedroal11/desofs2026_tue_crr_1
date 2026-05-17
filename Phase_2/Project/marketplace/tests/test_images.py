@@ -3,7 +3,7 @@
 import hashlib
 import io
 import os
-import uuid
+from uuid import UUID
 
 import pytest
 from main import app
@@ -110,11 +110,12 @@ class TestUploadValidationFailures:
     def test_upload_rejects_at_10_images(self, client, seller_user, db_session, jpeg_bytes):
         from models.models import ProductImage
         product_id = _create_product(client, seller_user)
-        
+        product_uuid = UUID(product_id)
+
         # Create 10 existing image records in DB
         for i in range(10):
             img = ProductImage(
-                product_id=product_id,
+                product_id=product_uuid,
                 filename=f"test_{i}.jpg",
                 original_filename=f"test_{i}.jpg",
                 mime_type="image/jpeg",
@@ -164,7 +165,7 @@ class TestUploadValidationFailures:
         
         from models.models import ProductImage
         image_id = res.json()["id"]
-        db_img = db_session.query(ProductImage).filter_by(id=image_id).first()
+        db_img = db_session.query(ProductImage).filter_by(id=UUID(image_id)).first()
         assert db_img is not None
         assert db_img.file_size == len(jpeg_bytes)
         clear_auth(client)
@@ -360,7 +361,7 @@ class TestImageExceptions:
     def test_upload_image_product_not_found(self, client, seller_user, jpeg_bytes):
         authenticate_as(client, seller_user)
         files = {"file": ("photo.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
-        res = client.post("/products/9999/images", files=files)
+        res = client.post("/products/00000000-0000-0000-0000-000000000000/images", files=files)
         assert res.status_code == 404
         clear_auth(client)
 
@@ -399,18 +400,23 @@ class TestImageExceptions:
         assert res.status_code == 400
 
     def test_list_product_images_404(self, client):
-        res = client.get("/products/9999/images")
+        res = client.get("/products/00000000-0000-0000-0000-000000000000/images")
         assert res.status_code == 404
 
     def test_delete_product_image_404_product(self, client, seller_user):
         authenticate_as(client, seller_user)
-        res = client.delete("/products/9999/images/1")
+        res = client.delete(
+            "/products/00000000-0000-0000-0000-000000000000"
+            "/images/00000000-0000-0000-0000-000000000000"
+        )
         assert res.status_code == 404
         clear_auth(client)
 
     def test_delete_product_image_404_image(self, client, seller_user):
         product_id = _create_product(client, seller_user)
-        res = client.delete(f"/products/{product_id}/images/9999")
+        res = client.delete(
+            f"/products/{product_id}/images/00000000-0000-0000-0000-000000000000"
+        )
         assert res.status_code == 404
         clear_auth(client)
 

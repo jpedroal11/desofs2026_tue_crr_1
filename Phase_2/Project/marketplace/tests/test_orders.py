@@ -69,7 +69,7 @@ def test_create_order_errors(client, seller_user, buyer_user):
     assert res.status_code == 400
 
     # 2. Product not found
-    res = client.post("/orders/", json={"shipping_address": "X", "items": [{"product_id": 9999, "quantity": 1}]})
+    res = client.post("/orders/", json={"shipping_address": "X", "items": [{"product_id": "00000000-0000-0000-0000-000000000000", "quantity": 1}]})
     assert res.status_code == 404
 
     # 3. Insufficient stock
@@ -100,9 +100,9 @@ def test_order_auth_errors(client, seller_user, buyer_user):
 
     # Access non-existent
     authenticate_as(client, buyer_user)
-    assert client.get("/orders/9999").status_code == 404
-    assert client.patch("/orders/9999", json={"shipping_address": "B"}).status_code == 404
-    assert client.delete("/orders/9999").status_code == 404
+    assert client.get("/orders/00000000-0000-0000-0000-000000000000").status_code == 404
+    assert client.patch("/orders/00000000-0000-0000-0000-000000000000", json={"shipping_address": "B"}).status_code == 404
+    assert client.delete("/orders/00000000-0000-0000-0000-000000000000").status_code == 404
     clear_auth(client)
 
 def test_update_order(client, seller_user, buyer_user):
