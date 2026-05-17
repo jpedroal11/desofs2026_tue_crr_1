@@ -1,0 +1,239 @@
+# SecureMarket — Test Prerequisites
+
+This document describes everything that must be in place before the contract tests can run. It covers tooling, test users, test data, fixture files, and database setup.
+
+---
+
+## 1. Python Packages
+
+Install all required packages into your development environment:
+
+```bash
+pip install pytest pytest-cov pytest-asyncio httpx pyjwt bandit pip-audit safety
+```
+
+| Package | Purpose |
+|---|---|
+| `pytest` | Test runner |
+| `pytest-cov` | Coverage reporting (required for ≥80% gate) |
+| `pytest-asyncio` | Support for async FastAPI test client |
+| `httpx` | HTTP client used by FastAPI's TestClient |
+| `pyjwt` | Decoding JWT claims in auth tests |
+| `bandit` | SAST — static security linting |
+| `pip-audit` | SCA — dependency CVE scanning |
+| `safety` | SCA — additional dependency vulnerability database |
+
+---
+
+## 2. Project Folder Structure
+
+Create the following folder structure before writing any tests:
+
+```
+tests/
+├── conftest.py
+├── fixtures/
+│   ├── valid.png
+│   ├── valid.jpg
+│   ├── fake.png
+│   └── large.bin
+├── test_auth.py
+├── test_authz.py
+├── test_business.py
+├── test_files.py
+└── sast/
+    ├── test_sast.py
+    └── test_sca.py
+```
+
+---
+
+## 3. Test Users
+
+The following five user accounts must be created in the test database before any test runs. They must have fixed, known UUIDs so tests can reference them reliably. Passwords must be stored as bcrypt hashes — the values below are the plaintext passwords the tests will submit.
+
+| UUID | Email | Password (plaintext) | Role |
+|---|---|---|---|
+| `aaaaaaaa-0001-0001-0001-000000000001` | admin@test.com | AdminPass123! | ADMIN |
+| `bbbbbbbb-0002-0002-0002-000000000002` | sellera@test.com | SellerPass123! | SELLER |
+| `cccccccc-0003-0003-0003-000000000003` | sellerb@test.com | SellerPass123! | SELLER |
+| `dddddddd-0004-0004-0004-000000000004` | buyera@test.com | BuyerPass123! | BUYER |
+| `eeeeeeee-0005-0005-0005-000000000005` | buyerb@test.com | BuyerPass123! | BUYER |
+
+**Why two sellers and two buyers?** The IDOR tests require proving that Seller A cannot access Seller B's resources, and Buyer A cannot access Buyer B's orders. You need two separate accounts per role to test cross-user isolation.
+
+**Why fixed UUIDs?** If UUIDs are randomly generated at seed time, your tests cannot know them in advance. Fixed UUIDs let you hardcode references in test fixtures without querying the database first.
+
+---
+
+## 4. Test Products
+
+The following products must be seeded with fixed UUIDs and the exact statuses shown:
+
+| UUID | Title | Owner | Status | Price | Stock |
+|---|---|---|---|---|---|
+| `11111111-aaaa-aaaa-aaaa-111111111111` | Test Active Product | Seller A | ACTIVE | 29.99 | 10 |
+| `22222222-bbbb-bbbb-bbbb-222222222222` | Test Draft Product | Seller A | DRAFT | 15.00 | 5 |
+| `33333333-cccc-cccc-cccc-333333333333` | Seller B Product | Seller B | ACTIVE | 9.99 | 3 |
+
+**Why the DRAFT product?** The authorisation test `test_buyer_cannot_access_draft_product` (SR-AUTHZ-06) needs a product in DRAFT status that belongs to Seller A. A buyer requesting this product must receive a 403 or 404.
+
+**Why a separate Seller B product?** The IDOR seller test needs a product that Seller A does not own, so the test can attempt a cross-seller modification.
+
+---
+
+## 5. Test Orders
+
+The following orders must be seeded with fixed UUIDs:
+
+| UUID | Buyer | Product | Status | Notes |
+|---|---|---|---|---|
+| `44444444-dddd-dddd-dddd-444444444444` | Buyer A | Test Active Product | PENDING | Used for cancel and IDOR tests |
+| `55555555-eeee-eeee-eeee-555555555555` | Buyer A | Test Active Product | DELIVERED | Used for review eligibility tests |
+| `66666666-ffff-ffff-ffff-666666666666` | Buyer B | Seller B Product | PENDING | Used for cross-buyer IDOR test |
+
+**Why a DELIVERED order?** The review tests (`test_buyer_cannot_review_without_purchase`, `test_buyer_cannot_leave_duplicate_review`) require a buyer to have a DELIVERED order for a specific product. Without this, the positive path for review creation cannot be tested at all.
+
+**Why Buyer B's order?** The IDOR test `test_buyer_cannot_access_another_buyers_order` needs an order UUID that belongs to Buyer B, which Buyer A will attempt to access using their own valid token.
+
+---
+
+## 6. Fixture Image Files
+
+Create the following files inside `tests/fixtures/`. They are used by the file upload tests.
+
+### 6.1 `valid.png` — A real minimal PNG file
+
+This must be a genuine PNG file with correct magic bytes (`\x89PNG\r\n\x1a\n`). It must be under 10MB.
+
+Create it with Python:
+
+```python
+from PIL import Image
+Image.new('RGB', (1, 1), color=(255, 0, 0)).save('tests/fixtures/valid.png')
+```
+
+Or with ImageMagick on the command line:
+
+```bash
+convert -size 1x1 xc:red tests/fixtures/valid.png
+```
+
+**Why it must be real:** The magic byte validation test uses this file as the upload payload for the path traversal test. If the file is not a real PNG, the magic byte check will reject it before the path traversal check is even reached, making the test result ambiguous.
+
+### 6.2 `valid.jpg` — A real minimal JPEG file
+
+Must be a genuine JPEG with correct magic bytes (`\xFF\xD8\xFF`). Under 10MB.
+
+```python
+from PIL import Image
+Image.new('RGB', (1, 1), color=(0, 255, 0)).save('tests/fixtures/valid.jpg')
+```
+
+### 6.3 `fake.png` — PHP content disguised as a PNG
+
+This file must have a `.png` extension but contain PHP source code as its content. Its magic bytes will be `3C 3F 70 68` (the bytes for `<?ph`) rather than the PNG magic bytes.
+
+```python
+with open('tests/fixtures/fake.png', 'w') as f:
+    f.write("<?php system($_GET['cmd']); ?>")
+```
+
+**What this tests:** The server must detect that the file content does not match its claimed extension. If only the extension is checked, this file passes — which is the vulnerability. If magic bytes are checked, it is rejected.
+
+### 6.4 `large.bin` — A file over 10MB
+
+Any binary file larger than 10,485,760 bytes (10 × 1024 × 1024).
+
+On Linux/macOS:
+
+```bash
+dd if=/dev/urandom of=tests/fixtures/large.bin bs=1M count=11
+```
+
+With Python:
+
+```python
+with open('tests/fixtures/large.bin', 'wb') as f:
+    f.write(b'0' * (10 * 1024 * 1024 + 1))
+```
+
+**Why random bytes instead of zeros?** Some compression-aware systems treat files of all zeros differently. Random bytes produce a file that behaves like real-world binary data.
+
+---
+
+## 7. Database Setup Requirements
+
+### 7.1 Test database isolation
+
+The tests must run against a **dedicated test database**, completely separate from the development database. Never run tests against a development or production database.
+
+The recommended approach is to set a `TEST_DATABASE_URL` environment variable and configure the application to use it when `TESTING=true`.
+
+### 7.2 Seed script
+
+Create a seed script at `tests/seed.py` that:
+
+1. Drops and recreates all tables (via Alembic or SQLAlchemy `create_all`)
+2. Inserts all five test users with the UUIDs and bcrypt-hashed passwords shown in Section 3
+3. Inserts the three test products with the UUIDs shown in Section 4
+4. Inserts the three test orders with the UUIDs shown in Section 5
+
+The seed script must be **idempotent** — running it twice must not create duplicate records. Use `INSERT ... ON CONFLICT DO NOTHING` or truncate tables before inserting.
+
+### 7.3 State reset between tests
+
+Some tests mutate state — the lockout test locks an account, the duplicate review test creates a review. If that state persists into the next test, unrelated tests will fail for the wrong reasons.
+
+Handle this in `conftest.py` using a pytest fixture with `autouse=True` that either:
+
+- Rolls back a database transaction after each test (using SQLAlchemy's session rollback), or
+- Re-runs the seed script before each test class
+
+```python
+# conftest.py example
+@pytest.fixture(autouse=True)
+def reset_db():
+    run_seed_script()
+    yield
+    # optional teardown
+```
+
+---
+
+## 8. Environment Variables
+
+The following environment variables must be set before running tests. Use a `.env.test` file and load it in `conftest.py`.
+
+| Variable | Example Value | Purpose |
+|---|---|---|
+| `TESTING` | `true` | Tells the app to use the test database |
+| `TEST_DATABASE_URL` | `postgresql://user:pass@localhost/securemarket_test` | Test database connection string |
+| `JWT_SECRET_KEY` | `test-secret-key-256-bits-minimum-length!!` | Must be at least 256 bits for SR-AUTH-06 |
+| `JWT_ALGORITHM` | `HS256` | Signing algorithm |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Must be ≤ 15 per SR-AUTH-05 |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Per SR-AUTH-05 |
+| `FILE_STORAGE_ROOT` | `/tmp/securemarket_test_uploads` | Isolated from development uploads |
+| `MAX_IMAGE_SIZE_MB` | `10` | Per SR-INPUT-03 |
+
+---
+
+## 9. Running the Tests
+
+Once all prerequisites are in place, run the full suite with coverage:
+
+```bash
+# Run all tests with coverage report
+pytest tests/ --cov=app --cov-report=term-missing -v
+
+# Run only authentication tests
+pytest tests/test_auth.py -v
+
+# Run only SAST checks
+pytest tests/sast/ -v
+
+# Run with HTML coverage report
+pytest tests/ --cov=app --cov-report=html
+```
+
+Coverage must be ≥ 80% for the quality gate to pass (NFR-05).
