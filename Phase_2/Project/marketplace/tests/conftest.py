@@ -303,6 +303,7 @@ def active_product(db_session, seller_user):
         price=29.99,
         stock=10,
         seller_id=seller_user.id,
+        status="active",
     )
     db_session.add(product)
     db_session.commit()
@@ -311,6 +312,8 @@ def active_product(db_session, seller_user):
         "id": str(product.id),
         "price": float(product.price),
         "stock": product.stock,
+        "status": "active",
+        "seller_id": str(product.seller_id)
     }
 
 
@@ -320,6 +323,7 @@ def delivered_order(db_session, buyer_user, seller_user, active_product):
     from models.models import Order, OrderItem, OrderStatus
     order = Order(
         buyer_id=buyer_user.id,
+        seller_id=seller_user.id,
         status=OrderStatus.delivered,
         total_amount=29.99,
         shipping_address="123 Test St, Porto, PT",
@@ -379,6 +383,7 @@ def buyer_b_order_id(db_session, seller_user):
 
     order = Order(
         buyer_id=buyer_b.id,
+        seller_id=seller_b.id,
         status=OrderStatus.pending,
         total_amount=49.99,
         shipping_address="456 Other St, Lisbon, PT",

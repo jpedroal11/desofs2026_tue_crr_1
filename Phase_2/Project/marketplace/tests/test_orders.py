@@ -1,7 +1,7 @@
 import pytest
 from main import app
 from middleware.auth import get_current_user
-from models import models
+from models.models import Role, User
 
 def authenticate_as(client, user):
     app.dependency_overrides[get_current_user] = lambda: user
@@ -185,7 +185,7 @@ def test_order_cannot_span_multiple_sellers(client, seller_user, buyer_user, db_
         username="seller_b",
         hashed_password="hashed_password",
     )
-    seller_b.roles = [db_session.query(models.models.Role).filter(models.models.Role.name == "Seller").first()]
+    seller_b.roles = [db_session.query(Role).filter(Role.name == "Seller").first()]
     db_session.add(seller_b)
     db_session.commit()
     db_session.refresh(seller_b)
