@@ -42,7 +42,7 @@ def get_current_user(
 
     jti = payload["jti"]
     if db.query(TokenBlacklist).filter(TokenBlacklist.jti == jti).first():
-        logger.warning("Revoked token presented: jti=%s", jti)
+        logger.warning("Revoked token presented")
         _deny("Token has been revoked")
 
     user = db.query(User).filter(User.id == _uuid.UUID(payload["sub"])).first()

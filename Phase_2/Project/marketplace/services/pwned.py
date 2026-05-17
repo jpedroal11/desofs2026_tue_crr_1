@@ -27,7 +27,8 @@ USER_AGENT = "SecureMarket-DESOFS/1.0"
 async def is_password_breached(password: str) -> bool:
     # SHA-1 is mandated by the HIBP API protocol (k-anonymity range query).
     # It is NOT used for password storage — that is bcrypt, in core.security.
-    sha1 = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()  # nosec B324
+    # nosemgrep
+    sha1 = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()  # nosec B324 - required by HIBP API protocol
     prefix, suffix = sha1[:5], sha1[5:]
 
     try:
@@ -38,13 +39,13 @@ async def is_password_breached(password: str) -> bool:
             )
             resp.raise_for_status()
     except httpx.HTTPError as exc:
-        logger.warning("HIBP unreachable, allowing password through: %s", exc)
+        logger.warning("HIBP unreachable, allowing password through")
         return False
 
     for line in resp.text.splitlines():
         returned_suffix, _, count = line.partition(":")
         if returned_suffix.strip() == suffix:
-            logger.warning("Breached password detected (seen %s times)", count.strip())
+            logger.warning("Breached password detected")
             return True
 
     return False

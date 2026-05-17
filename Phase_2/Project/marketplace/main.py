@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
     try:
-        os.chmod(upload_dir, 0o750)
+        os.chmod(upload_dir, 0o640)
     except (OSError, NotImplementedError):
         # Windows / non-POSIX filesystems may not support chmod — ignore
         pass

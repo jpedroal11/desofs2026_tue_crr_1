@@ -50,7 +50,8 @@ RESET_TOKEN_EXPIRE_MINUTES = 30
 
 # Real bcrypt hash that nothing matches — used to keep login timing constant
 # when the email is not registered (defends against enumeration via timing).
-DUMMY_BCRYPT_HASH = "$2b$12$KIXGhKMaGXkOHRLCkCHBtOFf5DqkWGqNlEkUBBMCL5LoV7vd9SiKi"
+# nosemgrep
+DUMMY_BCRYPT_HASH = "$2b$12$KIXGhKMaGXkOHRLCkCHBtOFf5DqkWGqNlEkUBBMCL5LoV7vd9SiKi"  # nosec B105
 
 DEFAULT_ROLE_NAME = UserRole.BUYER.value
 ADMINISTRATOR_ROLE_NAME = UserRole.ADMIN.value
@@ -181,7 +182,7 @@ def logout_user(access_token: str, db: Session) -> None:
     expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
     db.merge(TokenBlacklist(jti=payload["jti"], expires_at=expires_at))
     db.commit()
-    logger.info("Token blacklisted: jti=%s", payload["jti"])
+    logger.info("Token blacklisted")
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
@@ -224,7 +225,7 @@ def request_password_reset(email: str, db: Session) -> str | None:
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
     ))
     db.commit()
-    logger.info("Password reset requested: user_id=%s", user.id)
+    logger.info("Password reset requested")
     return raw_token
 
 
@@ -258,7 +259,7 @@ async def confirm_password_reset(token: str, new_password: str, db: Session) -> 
     record.used_at = now
     db.commit()
 
-    logger.info("Password reset completed: user_id=%s", user.id)
+    logger.info("Password reset completed")
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
