@@ -194,6 +194,13 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """Optional body for /auth/logout. When refresh_token is supplied it is
+    blacklisted alongside the access token so the session is fully terminated.
+    """
+    refresh_token: Optional[str] = None
+
+
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 

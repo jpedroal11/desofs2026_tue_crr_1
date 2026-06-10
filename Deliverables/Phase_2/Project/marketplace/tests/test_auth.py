@@ -418,6 +418,27 @@ def test_password_reset_expired_token(client, db_session):
     assert r.status_code == 400
 
 
+def test_logout_blacklists_refresh_token(client):
+    """Logout must also revoke the refresh token, otherwise the user can keep
+    minting new access tokens via /auth/refresh after logging out."""
+    _register(client)
+    tokens = client.post(
+        "/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD}
+    ).json()
+    access = tokens["access_token"]
+    refresh = tokens["refresh_token"]
+
+    r = client.post(
+        "/auth/logout",
+        headers={"Authorization": f"Bearer {access}"},
+        json={"refresh_token": refresh},
+    )
+    assert r.status_code == 200
+
+    r2 = client.post("/auth/refresh", json={"refresh_token": refresh})
+    assert r2.status_code == 401
+
+
 def test_password_reset_clears_lockout(client, db_session):
     _register(client)
     for _ in range(5):

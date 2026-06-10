@@ -14,6 +14,7 @@ from models.models import User
 from schemas.schemas import (
     AccessTokenResponse,
     LoginRequest,
+    LogoutRequest,
     MessageResponse,
     PasswordResetConfirm,
     PasswordResetRequest,
@@ -98,10 +99,12 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/logout", response_model=MessageResponse)
 def logout(
+    body: LogoutRequest | None = None,
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
     db: Session = Depends(get_db),
 ):
-    svc.logout_user(credentials.credentials, db)
+    refresh_token = body.refresh_token if body else None
+    svc.logout_user(credentials.credentials, db, refresh_token=refresh_token)
     return MessageResponse(message="Logged out")
 
 

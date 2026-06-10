@@ -172,17 +172,33 @@ def login_user(data: LoginRequest, db: Session) -> TokenPair:
 
 # ── Logout (blacklist the access token) ───────────────────────────────────────
 
-def logout_user(access_token: str, db: Session) -> None:
-    """Idempotent — calling it on an already-invalid token is a no-op."""
+def logout_user(access_token: str, db: Session, refresh_token: str | None = None) -> None:
+    """Idempotent — calling it on an already-invalid token is a no-op.
+
+    Blacklists the access token's jti and, when supplied, the refresh token's jti
+    too. Without revoking the refresh token a logged-out client could still mint
+    new access tokens via /auth/refresh.
+    """
     try:
         payload = decode_access_token(access_token)
     except InvalidTokenError:
-        return
+        payload = None
 
-    expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-    db.merge(TokenBlacklist(jti=payload["jti"], expires_at=expires_at))
+    if payload is not None:
+        expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        db.merge(TokenBlacklist(jti=payload["jti"], expires_at=expires_at))
+
+    if refresh_token:
+        try:
+            r_payload = decode_refresh_token(refresh_token)
+        except InvalidTokenError:
+            r_payload = None
+        if r_payload is not None:
+            r_expires_at = datetime.fromtimestamp(r_payload["exp"], tz=timezone.utc)
+            db.merge(TokenBlacklist(jti=r_payload["jti"], expires_at=r_expires_at))
+
     db.commit()
-    logger.info("Token blacklisted")
+    logger.info("Logout: tokens blacklisted")
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
