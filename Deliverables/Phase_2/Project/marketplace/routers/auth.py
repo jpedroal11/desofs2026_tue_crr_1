@@ -63,6 +63,10 @@ async def register(data: UserCreate, db: Session = Depends(get_db)):
     dependencies=[Depends(require_admin)],
 )
 async def register_admin(data: UserCreate, db: Session = Depends(get_db)):
+    # Delegates to the same service path as the public route — same exception
+    # handling so behaviour stays consistent. allow_admin=True means
+    # RoleNotAllowed won't fire here, but we map it anyway so future changes
+    # to the service can't silently leak a 500.
     try:
         user = await svc.register_user(data, db, allow_admin=True)
     except svc.EmailAlreadyRegistered:
@@ -73,6 +77,11 @@ async def register_admin(data: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "This password has appeared in a known data breach. Please choose a different one.",
+        )
+    except svc.RoleNotAllowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Registration with the Administrator role is not permitted.",
         )
     return user
 

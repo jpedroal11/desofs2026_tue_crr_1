@@ -58,7 +58,7 @@ def get_current_user(
         if cutoff.tzinfo is None:
             cutoff = cutoff.replace(tzinfo=timezone.utc)
         if iat < cutoff:
-            logger.warning("Token issued before revocation cutoff for user=%s", user.id)
+            logger.warning("Request rejected: iat predates revocation cutoff for user=%s", user.id)
             _deny("Token has been revoked")
 
     # Stash roles claim so role checks don't require an extra DB hit
