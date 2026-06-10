@@ -366,6 +366,22 @@ def test_password_reset_request_existing_email(client):
     assert "_dev_token" in body
 
 
+def test_password_reset_request_no_dev_token_in_production(client, monkeypatch):
+    """In APP_ENV=production the raw reset token must not appear in the HTTP
+    response — it should only ever be delivered by email."""
+    import routers.auth as auth_router
+
+    class _ProdSettings:
+        app_env = "production"
+
+    monkeypatch.setattr(auth_router, "get_settings", lambda: _ProdSettings())
+
+    _register(client)
+    r = client.post("/auth/password-reset/request", json={"email": "bob@x.com"})
+    assert r.status_code == 200
+    assert "_dev_token" not in r.json()
+
+
 def test_password_reset_request_unknown_email_same_response(client):
     """No enumeration — unknown email returns same status & message."""
     r1 = client.post("/auth/password-reset/request", json={"email": "nobody@x.com"})

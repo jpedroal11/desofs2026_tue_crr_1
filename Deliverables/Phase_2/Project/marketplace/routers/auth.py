@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from core.config import get_settings
 from core.dependencies import get_db
 from middleware.auth import get_current_user, require_admin
 from models.models import User
@@ -126,13 +127,12 @@ def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
 @router.post("/password-reset/request")
 def password_reset_request(data: PasswordResetRequest, db: Session = Depends(get_db)):
     """Always returns the same response — never reveals whether the email is
-    registered. NOTE: in production the token is emailed; here we surface it
-    in the response for development. REMOVE the _dev_token field before any
-    non-dev deployment.
+    registered. In production the token is emailed; outside production we
+    surface it in the response so developers/tests can use it directly.
     """
     raw_token = svc.request_password_reset(data.email, db)
     response = {"message": "If that email is registered, a reset link has been sent."}
-    if raw_token:
+    if raw_token and get_settings().app_env.lower() != "production":
         response["_dev_token"] = raw_token
     return response
 
