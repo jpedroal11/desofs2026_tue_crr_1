@@ -89,6 +89,21 @@ def test_update_user(client, buyer_user, seller_user):
     assert res_403.status_code == 403
     clear_auth(client)
 
+def test_update_user_cannot_self_disable(client, buyer_user):
+    """`is_active` is not exposed on UserUpdate — sending it must be ignored
+    (Pydantic strips unknown fields) so a user cannot self-DoS via PATCH."""
+    user_id = buyer_user.id
+    authenticate_as(client, buyer_user)
+
+    res = client.patch(
+        f"/users/{user_id}",
+        json={"full_name": "still-me", "is_active": False},
+    )
+    assert res.status_code == 200
+    assert res.json()["is_active"] is True
+    clear_auth(client)
+
+
 def test_update_user_404(client, db_session):
     # Setup an orphan user in db but we act as them so we pass the self check
     new_user = User(

@@ -50,8 +50,12 @@ class UserCreate(UserBase):
 
 
 class UserUpdate(BaseModel):
+    """Self-service profile update. `is_active` is intentionally omitted —
+    flipping it via this endpoint would let a user lock themselves out
+    (self-DoS) without ever being able to flip it back. Account activation
+    state is owned by admin/soft-delete flows only.
+    """
     full_name: Optional[str] = None
-    is_active: Optional[bool] = None
 
 
 class UserResponse(UserBase):
