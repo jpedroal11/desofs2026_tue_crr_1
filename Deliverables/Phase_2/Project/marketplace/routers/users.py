@@ -4,22 +4,35 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from core.dependencies import get_db
-from middleware.auth import get_current_user
+from middleware.auth import get_current_user, require_admin
 from models.models import User
 from schemas.schemas import UserResponse, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-@router.get("/", response_model=List[UserResponse])
+@router.get(
+    "/",
+    response_model=List[UserResponse],
+    dependencies=[Depends(require_admin)],
+)
 def list_users(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
-    """List all active users (public endpoint)."""
+    """List all active users. Admin only — the response includes PII (email)
+    so it must not be exposed to unauthenticated callers or enumerated by
+    non-admins.
+    """
     return db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-def get_user(user_id: uuid.UUID, db: Session = Depends(get_db)):
-    """Get a user by ID."""
+def get_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a user by ID. Authenticated callers only — the response includes
+    PII (email) so it cannot be public.
+    """
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

@@ -24,8 +24,8 @@ The `routers` module implements the HTTP API interface for the application. Each
 ### `users.py`
 - **Purpose**: User profile and account management
 - **Endpoints**:
-  - `GET /users/` - List all active users (public)
-  - `GET /users/{id}` - Get user profile by ID (public)
+  - `GET /users/` - List all active users (admin only)
+  - `GET /users/{id}` - Get user profile by ID (authenticated)
   - `PATCH /users/{id}` - Update own profile (protected, owner only)
   - `DELETE /users/{id}` - Soft-delete own account (protected, owner only)
 - **Key Logic**:

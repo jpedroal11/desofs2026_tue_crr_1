@@ -69,8 +69,8 @@ export DATABASE_URL="postgresql://user:password@localhost/marketplace"
 ### Users
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/users/` | ❌ | List all active users |
-| GET | `/users/{id}` | ❌ | Get user by ID |
+| GET | `/users/` | ✅ (Admin) | List all active users |
+| GET | `/users/{id}` | ✅ | Get user by ID |
 | PATCH | `/users/{id}` | ✅ | Update own profile |
 | DELETE | `/users/{id}` | ✅ | Soft-delete own account |
 
