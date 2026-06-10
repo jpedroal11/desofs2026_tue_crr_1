@@ -203,7 +203,11 @@ def logout_user(access_token: str, db: Session, refresh_token: str | None = None
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
 
-def refresh_access_token(refresh_token: str, db: Session) -> str:
+def refresh_access_token(refresh_token: str, db: Session) -> TokenPair:
+    """Rotates the refresh token: blacklists the presented one and issues a
+    fresh pair. This lets us detect refresh-token theft (a stolen-but-rotated
+    token will fail on second use) and limits replay windows.
+    """
     try:
         payload = decode_refresh_token(refresh_token)
     except InvalidTokenError:
@@ -221,9 +225,15 @@ def refresh_access_token(refresh_token: str, db: Session) -> str:
         if iat < _aware(user.tokens_valid_from):
             raise InvalidToken()
 
+    # Rotate — old refresh jti becomes unusable from this point on
+    old_expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+    db.merge(TokenBlacklist(jti=payload["jti"], expires_at=old_expires_at))
+
     roles = [r.name for r in user.roles]
     new_access, _, _ = create_access_token(str(user.id), roles)
-    return new_access
+    new_refresh, _, _ = create_refresh_token(str(user.id))
+    db.commit()
+    return TokenPair(access_token=new_access, refresh_token=new_refresh)
 
 
 # ── Password reset — request ──────────────────────────────────────────────────

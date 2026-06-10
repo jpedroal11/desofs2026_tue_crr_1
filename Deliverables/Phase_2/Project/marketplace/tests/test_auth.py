@@ -315,12 +315,30 @@ def test_refresh_returns_new_access_token(client):
 
     r = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     assert r.status_code == 200
-    new_access = r.json()["access_token"]
+    body = r.json()
+    new_access = body["access_token"]
+    new_refresh = body["refresh_token"]
     assert new_access and new_access != tokens["access_token"]
+    # Rotation — the refresh token must also change
+    assert new_refresh and new_refresh != tokens["refresh_token"]
 
     assert client.get(
         "/auth/me", headers={"Authorization": f"Bearer {new_access}"}
     ).status_code == 200
+
+
+def test_refresh_token_rotation_makes_old_token_single_use(client):
+    """After a successful /refresh the presented refresh token must not work
+    again — that's how refresh-token theft becomes detectable."""
+    _register(client)
+    tokens = client.post(
+        "/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD}
+    ).json()
+    old_refresh = tokens["refresh_token"]
+
+    assert client.post("/auth/refresh", json={"refresh_token": old_refresh}).status_code == 200
+    # Second use of the same refresh token must be rejected
+    assert client.post("/auth/refresh", json={"refresh_token": old_refresh}).status_code == 401
 
 
 def test_refresh_with_access_token_rejected(client):

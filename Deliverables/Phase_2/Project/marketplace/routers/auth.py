@@ -108,13 +108,19 @@ def logout(
     return MessageResponse(message="Logged out")
 
 
-@router.post("/refresh", response_model=AccessTokenResponse)
+@router.post("/refresh", response_model=TokenResponse)
 def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
+    """Rotates the refresh token — the supplied token is single-use; the
+    response always contains a fresh access AND refresh token. Clients must
+    replace both."""
     try:
-        access = svc.refresh_access_token(data.refresh_token, db)
+        tokens = svc.refresh_access_token(data.refresh_token, db)
     except svc.InvalidToken:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
-    return AccessTokenResponse(access_token=access)
+    return TokenResponse(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+    )
 
 
 @router.post("/password-reset/request")
