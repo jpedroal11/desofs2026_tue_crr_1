@@ -12,6 +12,7 @@ Use one of:
 
 import logging
 import uuid as _uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
@@ -48,6 +49,17 @@ def get_current_user(
     user = db.query(User).filter(User.id == _uuid.UUID(payload["sub"])).first()
     if user is None or not user.is_active:
         _deny("User not found or inactive")
+
+    # Reject tokens issued before the user's revocation cutoff (e.g. set by a
+    # password reset). SQLite drops tz info on read — re-attach UTC.
+    if user.tokens_valid_from is not None:
+        iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+        cutoff = user.tokens_valid_from
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        if iat < cutoff:
+            logger.warning("Token issued before revocation cutoff for user=%s", user.id)
+            _deny("Token has been revoked")
 
     # Stash roles claim so role checks don't require an extra DB hit
     user._jwt_roles = payload.get("roles", [])  # type: ignore[attr-defined]

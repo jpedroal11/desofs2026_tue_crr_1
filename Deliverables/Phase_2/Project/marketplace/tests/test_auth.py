@@ -418,6 +418,32 @@ def test_password_reset_expired_token(client, db_session):
     assert r.status_code == 400
 
 
+def test_password_reset_invalidates_existing_tokens(client):
+    """After a password reset, previously-issued access/refresh tokens must be
+    rejected (ASVS V6 — existing sessions terminated on credential change)."""
+    _register(client)
+    tokens = client.post(
+        "/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD}
+    ).json()
+    old_access = tokens["access_token"]
+    old_refresh = tokens["refresh_token"]
+
+    reset_token = client.post(
+        "/auth/password-reset/request", json={"email": "bob@x.com"}
+    ).json()["_dev_token"]
+    assert client.post(
+        "/auth/password-reset/confirm",
+        json={"token": reset_token, "new_password": ANOTHER_GOOD},
+    ).status_code == 200
+
+    assert client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {old_access}"}
+    ).status_code == 401
+    assert client.post(
+        "/auth/refresh", json={"refresh_token": old_refresh}
+    ).status_code == 401
+
+
 def test_logout_blacklists_refresh_token(client):
     """Logout must also revoke the refresh token, otherwise the user can keep
     minting new access tokens via /auth/refresh after logging out."""

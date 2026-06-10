@@ -216,6 +216,11 @@ def refresh_access_token(refresh_token: str, db: Session) -> str:
     if not user or not user.is_active:
         raise InvalidToken()
 
+    if user.tokens_valid_from is not None:
+        iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+        if iat < _aware(user.tokens_valid_from):
+            raise InvalidToken()
+
     roles = [r.name for r in user.roles]
     new_access, _, _ = create_access_token(str(user.id), roles)
     return new_access
@@ -272,10 +277,13 @@ async def confirm_password_reset(token: str, new_password: str, db: Session) -> 
     user.hashed_password = hash_password(new_password)
     user.failed_login_attempts = 0
     user.locked_until = None
+    # Invalidate every existing access/refresh token issued before now —
+    # a password reset must terminate active sessions.
+    user.tokens_valid_from = now
     record.used_at = now
     db.commit()
 
-    logger.info("Password reset completed")
+    logger.info("Password reset completed; existing sessions invalidated")
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
