@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -92,3 +93,66 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-gcp:
+    name: Deploy to GCP Compute Engine
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via WIF
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest \
+                       -t ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:${{ github.sha }} \
+                       Deliverables/Phase_2/Project/marketplace
+
+      - name: Push image to Artifact Registry
+        run: |
+          docker push ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+          docker push ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:${{ github.sha }}
+
+      - name: Deploy to VM via SSH
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USERNAME: ${{ secrets.VM_USERNAME }}
+          IMAGE_URL: ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H $VM_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+          echo "${{ secrets.VM_SSH_KEY_BASE64 }}" | base64 -d > /tmp/vm_key
+          chmod 600 /tmp/vm_key
+          ssh -i /tmp/vm_key $VM_USERNAME@$VM_HOST << 'DEPLOY_EOF'
+          gcloud auth configure-docker ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev
+          docker pull $IMAGE_URL
+          docker stop marketplace || true
+          docker rm marketplace || true
+          docker run -d \
+            --name marketplace \
+            --restart always \
+            -p 8000:8000 \
+            -e SECRET_KEY="${{ secrets.APP_SECRET_KEY }}" \
+            -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            -e APP_ENV="production" \
+            $IMAGE_URL
+          DEPLOY_EOF
