@@ -220,3 +220,39 @@ def test_stock_reduce_forbidden_404(client, seller_user, buyer_user):
     authenticate_as(client, seller_user)
     assert client.post("/products/00000000-0000-0000-0000-000000000000/stock/reduce", json={"quantity": 1}).status_code == 404
     clear_auth(client)
+
+
+
+def test_buyer_cannot_view_draft_product(client, seller_user, buyer_user):
+    """MST-09: Buyers must not be able to view products still in draft status."""
+    authenticate_as(client, seller_user)
+    res = client.post("/products/", json={"name": "DraftProd", "price": 10.0, "stock": 1})
+    assert res.status_code == 201
+    product_id = res.json()["id"]
+    # Default status should be draft
+    assert res.json()["status"] == "draft"
+    clear_auth(client)
+
+    # Buyer tries to access the draft product -> should be forbidden or not found
+    authenticate_as(client, buyer_user)
+    r = client.get(f"/products/{product_id}")
+    assert r.status_code in (403, 404)
+    clear_auth(client)
+
+
+def test_reject_template_injection_in_product_fields(client, seller_user):
+    """MST-NEW-13: Reject or store literally any template-like input in product fields."""
+    authenticate_as(client, seller_user)
+    payload = {
+        "name": "{{7*7}} Product",
+        "description": "Price is: {{7*7}}",
+        "price": 10.0,
+        "stock": 1,
+    }
+    res = client.post("/products/", json=payload)
+    assert res.status_code == 201
+    data = res.json()
+    # Ensure value is stored literally and not evaluated
+    assert data["name"] == "{{7*7}} Product"
+    assert data.get("description") == "Price is: {{7*7}}"
+    clear_auth(client)
