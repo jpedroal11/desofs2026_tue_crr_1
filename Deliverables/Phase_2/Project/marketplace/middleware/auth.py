@@ -66,6 +66,22 @@ def get_current_user(
     return user
 
 
+def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Like get_current_user but never raises — returns None when no valid
+    credentials are present. For endpoints that are public but tailor their
+    response to the caller (e.g. showing a seller their own draft products).
+    """
+    if credentials is None:
+        return None
+    try:
+        return get_current_user(credentials, db)
+    except HTTPException:
+        return None
+
+
 def require_role(*allowed_role_names: str):
     """Returns a dependency that allows the request only if the user has at
     least one of the given roles. Matching is case-insensitive.
