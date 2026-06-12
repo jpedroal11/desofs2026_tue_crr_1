@@ -1,6 +1,7 @@
+import enum
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -15,11 +16,11 @@ from sqlalchemy import (
     Text,
     Uuid,
 )
-from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy.sql import func
-import enum
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
 
 
 def _utcnow() -> datetime:
@@ -37,9 +38,12 @@ user_roles_table = Table(
 class Role(Base):
     __tablename__ = "roles"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), nullable=False, unique=True)
-    users = relationship("User", secondary=user_roles_table, back_populates="roles")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+
+    users: Mapped[List["User"]] = relationship(
+        "User", secondary=user_roles_table, back_populates="roles"
+    )
 
 
 class OrderStatus(str, enum.Enum):
@@ -59,24 +63,34 @@ class ProductStatus(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    email = Column(String(255), unique=True, index=True, nullable=False)
-    username = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
-    full_name = Column(String(255), nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Lockout state (5 failed attempts -> 15-minute lock)
-    failed_login_attempts = Column(Integer, default=0, nullable=False)
-    locked_until = Column(DateTime(timezone=True), nullable=True)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    # Mass-revocation cutoff: any token whose iat is earlier than this is rejected.
+    # Bumped on password reset so all previously-issued sessions are invalidated.
+    tokens_valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    products = relationship("Product", back_populates="seller")
-    orders = relationship("Order", foreign_keys="Order.buyer_id", back_populates="buyer")
-    orders_as_seller = relationship("Order", foreign_keys="Order.seller_id", viewonly=True)
-    roles = relationship("Role", secondary=user_roles_table, back_populates="users")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    products: Mapped[List["Product"]] = relationship("Product", back_populates="seller")
+    orders: Mapped[List["Order"]] = relationship(
+        "Order", foreign_keys="Order.buyer_id", back_populates="buyer"
+    )
+    orders_as_seller: Mapped[List["Order"]] = relationship(
+        "Order", foreign_keys="Order.seller_id", viewonly=True
+    )
+    roles: Mapped[List["Role"]] = relationship(
+        "Role", secondary=user_roles_table, back_populates="users"
+    )
 
     @property
     def is_seller(self) -> bool:
@@ -97,65 +111,69 @@ class User(Base):
 class Product(Base):
     __tablename__ = "products"
 
-    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    name = Column(String, index=True, nullable=False)
-    description = Column(Text, nullable=True)
-    price = Column(Float, nullable=False)
-    stock = Column(Integer, default=0)
-    status = Column(Enum(ProductStatus), default=ProductStatus.draft)
-    seller_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    stock: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[ProductStatus] = mapped_column(Enum(ProductStatus), default=ProductStatus.draft)
+    seller_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
-    seller = relationship("User", back_populates="products")
-    order_items = relationship("OrderItem", back_populates="product")
-    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan")
+    seller: Mapped["User"] = relationship("User", back_populates="products")
+    order_items: Mapped[List["OrderItem"]] = relationship("OrderItem", back_populates="product")
+    images: Mapped[List["ProductImage"]] = relationship(
+        "ProductImage", back_populates="product", cascade="all, delete-orphan"
+    )
 
 
 class Order(Base):
     __tablename__ = "orders"
 
-    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    buyer_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
-    seller_id = Column(Uuid, ForeignKey("users.id"), nullable=False)
-    status = Column(Enum(OrderStatus), default=OrderStatus.pending)
-    total_amount = Column(Float, default=0.0)
-    shipping_address = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    buyer_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    seller_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.pending)
+    total_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    shipping_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    invoice_filename: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
-    buyer = relationship("User", foreign_keys=[buyer_id], back_populates="orders")
-    seller = relationship("User", foreign_keys=[seller_id], viewonly=True)
-    items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
-    invoice_filename = Column(String(200), nullable=True)
+    buyer: Mapped["User"] = relationship("User", foreign_keys=[buyer_id], back_populates="orders")
+    seller: Mapped["User"] = relationship("User", foreign_keys=[seller_id], viewonly=True)
+    items: Mapped[List["OrderItem"]] = relationship(
+        "OrderItem", back_populates="order", cascade="all, delete-orphan"
+    )
 
 
 class OrderItem(Base):
     __tablename__ = "order_items"
 
-    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    order_id = Column(Uuid, ForeignKey("orders.id"), nullable=False)
-    product_id = Column(Uuid, ForeignKey("products.id"), nullable=False)
-    quantity = Column(Integer, nullable=False)
-    unit_price = Column(Float, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    order_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("orders.id"), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("products.id"), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price: Mapped[float] = mapped_column(Float, nullable=False)
 
-    order = relationship("Order", back_populates="items")
-    product = relationship("Product", back_populates="order_items")
+    order: Mapped["Order"] = relationship("Order", back_populates="items")
+    product: Mapped["Product"] = relationship("Product", back_populates="order_items")
 
 
 class ProductImage(Base):
     __tablename__ = "product_images"
 
-    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    product_id = Column(Uuid, ForeignKey("products.id"), nullable=False)
-    filename = Column(String, unique=True, nullable=False)
-    original_filename = Column(String, nullable=False)
-    mime_type = Column(String, nullable=False)
-    file_size = Column(Integer, nullable=False)
-    sha256_hash = Column(String(64), nullable=False)
-    uploaded_at = Column(DateTime(timezone=True), default=_utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("products.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String, nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
-    product = relationship("Product", back_populates="images")
+    product: Mapped["Product"] = relationship("Product", back_populates="images")
 
 
 # ── Auth-related tables (owned by Pedro Leal — Sprint 1 user aggregate) ──────
@@ -167,9 +185,9 @@ class TokenBlacklist(Base):
     """
     __tablename__ = "token_blacklist"
 
-    jti = Column(String(64), primary_key=True)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    revoked_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    jti: Mapped[str] = mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
 class PasswordResetToken(Base):
@@ -181,8 +199,10 @@ class PasswordResetToken(Base):
     """
     __tablename__ = "password_reset_tokens"
 
-    token_hash = Column(String(64), primary_key=True)
-    user_id = Column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

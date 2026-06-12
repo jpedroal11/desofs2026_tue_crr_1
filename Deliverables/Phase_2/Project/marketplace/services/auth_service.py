@@ -172,22 +172,42 @@ def login_user(data: LoginRequest, db: Session) -> TokenPair:
 
 # ── Logout (blacklist the access token) ───────────────────────────────────────
 
-def logout_user(access_token: str, db: Session) -> None:
-    """Idempotent — calling it on an already-invalid token is a no-op."""
+def logout_user(access_token: str, db: Session, refresh_token: str | None = None) -> None:
+    """Idempotent — calling it on an already-invalid token is a no-op.
+
+    Blacklists the access token's jti and, when supplied, the refresh token's jti
+    too. Without revoking the refresh token a logged-out client could still mint
+    new access tokens via /auth/refresh.
+    """
     try:
         payload = decode_access_token(access_token)
     except InvalidTokenError:
-        return
+        payload = None
 
-    expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-    db.merge(TokenBlacklist(jti=payload["jti"], expires_at=expires_at))
+    if payload is not None:
+        expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        db.merge(TokenBlacklist(jti=payload["jti"], expires_at=expires_at))
+
+    if refresh_token:
+        try:
+            r_payload = decode_refresh_token(refresh_token)
+        except InvalidTokenError:
+            r_payload = None
+        if r_payload is not None:
+            r_expires_at = datetime.fromtimestamp(r_payload["exp"], tz=timezone.utc)
+            db.merge(TokenBlacklist(jti=r_payload["jti"], expires_at=r_expires_at))
+
     db.commit()
-    logger.info("Token blacklisted")
+    logger.info("Logout: tokens blacklisted")
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
 
-def refresh_access_token(refresh_token: str, db: Session) -> str:
+def refresh_access_token(refresh_token: str, db: Session) -> TokenPair:
+    """Rotates the refresh token: blacklists the presented one and issues a
+    fresh pair. This lets us detect refresh-token theft (a stolen-but-rotated
+    token will fail on second use) and limits replay windows.
+    """
     try:
         payload = decode_refresh_token(refresh_token)
     except InvalidTokenError:
@@ -200,9 +220,20 @@ def refresh_access_token(refresh_token: str, db: Session) -> str:
     if not user or not user.is_active:
         raise InvalidToken()
 
+    if user.tokens_valid_from is not None:
+        iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+        if iat < _aware(user.tokens_valid_from):
+            raise InvalidToken()
+
+    # Rotate — old refresh jti becomes unusable from this point on
+    old_expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+    db.merge(TokenBlacklist(jti=payload["jti"], expires_at=old_expires_at))
+
     roles = [r.name for r in user.roles]
     new_access, _, _ = create_access_token(str(user.id), roles)
-    return new_access
+    new_refresh, _, _ = create_refresh_token(str(user.id))
+    db.commit()
+    return TokenPair(access_token=new_access, refresh_token=new_refresh)
 
 
 # ── Password reset — request ──────────────────────────────────────────────────
@@ -256,10 +287,13 @@ async def confirm_password_reset(token: str, new_password: str, db: Session) -> 
     user.hashed_password = hash_password(new_password)
     user.failed_login_attempts = 0
     user.locked_until = None
+    # Invalidate every existing access/refresh token issued before now —
+    # a password reset must terminate active sessions.
+    user.tokens_valid_from = now
     record.used_at = now
     db.commit()
 
-    logger.info("Password reset completed")
+    logger.info("Password reset completed; existing sessions invalidated")
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
