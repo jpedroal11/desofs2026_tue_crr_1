@@ -36,9 +36,21 @@ def list_products(
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
-def get_product(product_id: UUID, db: Session = Depends(get_db)):
+def get_product(
+    product_id: UUID, 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)):
     """Get a product by ID."""
-    product = db.query(Product).filter(Product.id == product_id).first()
+    query = db.query(Product).filter(Product.id == product_id)
+
+    if current_user.is_seller:
+        query = query.filter(
+            (Product.seller_id == current_user.id) | (Product.status == ProductStatus.active)
+        )
+    elif current_user.is_buyer:
+        query = query.filter(Product.status == ProductStatus.active)
+
+    product = query.first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product

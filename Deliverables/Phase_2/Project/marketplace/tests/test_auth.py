@@ -518,3 +518,27 @@ def test_password_reset_clears_lockout(client, db_session):
     db_session.refresh(user)
     assert user.locked_until is None
     assert user.failed_login_attempts == 0
+
+
+def test_lockout_expires_after_30_minutes(client, db_session):
+    """MST-NEW-02: Lockout should expire after the configured lockout period."""
+    _register(client)
+    # Trigger lockout
+    for _ in range(5):
+        client.post("/auth/login", json={"email": "bob@x.com", "password": "wrong!Pass1234"})
+
+    user = db_session.query(User).filter(User.email == "bob@x.com").first()
+    assert user.locked_until is not None
+
+    # Simulate time passing: set locked_until to the past
+    from datetime import datetime, timezone, timedelta
+    user.locked_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db_session.commit()
+
+    # Now login with correct password should succeed
+    res = client.post("/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD})
+    assert res.status_code == 200
+
+    db_session.refresh(user)
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None

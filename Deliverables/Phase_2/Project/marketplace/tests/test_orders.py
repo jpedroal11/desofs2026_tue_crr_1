@@ -224,7 +224,7 @@ def test_cancel_order(client, seller_user, buyer_user):
     p5_id = res.json()["id"]
     client.patch(f"/products/{p5_id}/status", json={"status": "active"})
     clear_auth(client)
-
+    
     authenticate_as(client, buyer_user)
     res = client.post("/orders/", json={"shipping_address": "A", "items": [{"product_id": p5_id, "quantity": 1}]})
     order_id = res.json()["id"]
@@ -239,4 +239,63 @@ def test_cancel_order(client, seller_user, buyer_user):
     # Cannot cancel cancelled order
     res_cancel_again = client.delete(f"/orders/{order_id}")
     assert res_cancel_again.status_code == 400
+    clear_auth(client)
+
+
+
+def test_invoice_download_only_requester_can_access(client, seller_user, buyer_user, db_session):
+    """MST-NEW-05: Only the buyer (or admin) can download an order's invoice."""
+    # Create a second buyer in the DB
+    buyer_b = User(email="buyer_b@example.com", username="buyer_b", hashed_password="hashed")
+    buyer_b.roles = [db_session.query(Role).filter(Role.name == "Buyer").first()]
+    db_session.add(buyer_b)
+    db_session.commit()
+    db_session.refresh(buyer_b)
+
+    # Seller creates a product
+    authenticate_as(client, seller_user)
+    res = client.post("/products/", json={"name": "InvoiceProd", "price": 5.0, "stock": 5})
+    p_id = res.json()["id"]
+    client.patch(f"/products/{p_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    # Buyer B places an order
+    authenticate_as(client, buyer_b)
+    order_res = client.post("/orders/", json={"shipping_address": "Addr", "items": [{"product_id": p_id, "quantity": 1}]})
+    assert order_res.status_code == 201
+    order_id = order_res.json()["id"]
+    clear_auth(client)
+
+    # Buyer A (existing fixture) attempts to download Buyer B's invoice -> forbidden
+    authenticate_as(client, buyer_user)
+    r = client.get(f"/orders/{order_id}/invoice")
+    assert r.status_code == 403
+    clear_auth(client)
+
+
+def test_invalid_order_status_transition_rejected(client, seller_user, buyer_user):
+    """MST-15: Invalid order status transitions must be rejected."""
+    # Create product and order
+    authenticate_as(client, seller_user)
+    res = client.post("/products/", json={"name": "StatusProd", "price": 10.0, "stock": 5})
+    p_id = res.json()["id"]
+    client.patch(f"/products/{p_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    authenticate_as(client, buyer_user)
+    order_res = client.post("/orders/", json={"shipping_address": "Addr", "items": [{"product_id": p_id, "quantity": 1}]})
+    assert order_res.status_code == 201
+    order_id = order_res.json()["id"]
+    clear_auth(client)
+
+    # Seller marks order as delivered
+    authenticate_as(client, seller_user)
+    r1 = client.patch(f"/orders/{order_id}", json={"status": "delivered"})
+    assert r1.status_code == 200
+    clear_auth(client)
+
+    # Attempt to revert to pending (invalid backward transition) -> should be rejected
+    authenticate_as(client, seller_user)
+    r2 = client.patch(f"/orders/{order_id}", json={"status": "pending"})
+    assert r2.status_code in (400, 422)
     clear_auth(client)

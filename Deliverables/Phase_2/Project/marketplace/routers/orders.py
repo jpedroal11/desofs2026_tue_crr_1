@@ -148,6 +148,8 @@ def update_order(
         if field == "status":
             if not seller_can_update_status:
                 raise HTTPException(status_code=403, detail="Not allowed to change order status")
+            if not _is_valid_status_transition(order.status, value):
+                raise HTTPException(status_code=400, detail="Invalid order status transition")
         elif field == "shipping_address":
             if not buyer_can_update or order.status != OrderStatus.pending:
                 raise HTTPException(status_code=403, detail="Shipping address can only be updated while order is pending")
@@ -177,7 +179,7 @@ def update_order(
 
 @router.get("/{order_id}/invoice")
 def download_invoice(
-    order_id: int,
+    order_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -231,3 +233,17 @@ def cancel_order(
 
     order.status = OrderStatus.cancelled
     db.commit()
+
+
+def _is_valid_status_transition(old_status: OrderStatus, new_status: OrderStatus) -> bool:
+    if old_status == new_status:
+        return True
+
+    allowed_transitions = {
+        OrderStatus.pending: {OrderStatus.confirmed, OrderStatus.shipped, OrderStatus.delivered, OrderStatus.cancelled},
+        OrderStatus.confirmed: {OrderStatus.shipped, OrderStatus.delivered, OrderStatus.cancelled},
+        OrderStatus.shipped: {OrderStatus.delivered},
+        OrderStatus.delivered: set(),
+        OrderStatus.cancelled: set(),
+    }
+    return new_status in allowed_transitions.get(old_status, set())
