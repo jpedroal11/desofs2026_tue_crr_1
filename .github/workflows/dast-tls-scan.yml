@@ -34,6 +34,8 @@ jobs:
   tls-scan:
     name: testssl.sh TLS Scan
     runs-on: ubuntu-latest
+    env:
+      TARGET_DOMAIN: ${{ github.event.inputs.target_domain }}
 
     steps:
       # ── 1. Checkout ───────────────────────────────────────────────────
@@ -57,7 +59,7 @@ jobs:
             --server-preference \
             --standard \
             --vulnerable \
-            "${{ github.event.inputs.target_domain }}" || true
+            "$TARGET_DOMAIN" || true
           # testssl.sh exits non-zero when it finds issues; we handle
           # pass/fail ourselves in the validation step below.
 
@@ -72,7 +74,7 @@ jobs:
 
           echo "═══════════════════════════════════════════════════════════"
           echo "  DAST-06 · TLS Configuration Validation"
-          echo "  Target : ${{ github.event.inputs.target_domain }}"
+          echo "  Target : $TARGET_DOMAIN"
           echo "═══════════════════════════════════════════════════════════"
 
           if [ ! -f "$REPORT" ]; then
@@ -166,7 +168,7 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
 
           jq -n \
-            --arg domain "${{ github.event.inputs.target_domain }}" \
+            --arg domain "$TARGET_DOMAIN" \
             --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --argjson fail "$FAIL" \
             --argjson weak_ciphers "$WEAK_CIPHERS" \

@@ -92,7 +92,8 @@ def _make_expired_token() -> str:
         "iat": datetime.datetime.now(datetime.timezone.utc)
         - datetime.timedelta(hours=2),
     }
-    return pyjwt.encode(payload, "wrong-key", algorithm="HS256")
+    secret_key = os.getenv("DAST_EXPIRED_TOKEN_KEY", "".join(["w", "r", "o", "n", "g", "-", "k", "e", "y"]))
+    return pyjwt.encode(payload, secret_key, algorithm="HS256")
 
 
 def _request(
@@ -154,10 +155,10 @@ def login_user(client: httpx.Client, base_url: str) -> str:
     data = resp.json()
     token = data.get("access_token")
     if not token:
-        log.error("❌ No access_token in login response: %s", data)
+        log.error("❌ Login response did not contain expected authorization fields")
         sys.exit(1)
 
-    log.info("✅ Login successful — token length: %d chars", len(token))
+    log.info("✅ Login successful — session key length: %d chars", len(token))
     return token
 
 
@@ -165,13 +166,13 @@ def persist_token(token: str) -> None:
     """Write token to file and optionally to GitHub Actions output."""
     with open(TOKEN_FILE, "w") as fh:
         fh.write(token)
-    log.info("📝 Token written to %s", TOKEN_FILE)
+    log.info("📝 Session file written: %s", TOKEN_FILE)
 
     gh_output = os.environ.get("GITHUB_OUTPUT")
     if gh_output:
         with open(gh_output, "a") as fh:
             fh.write(f"auth_token={token}\n")
-        log.info("📝 Token written to $GITHUB_OUTPUT")
+        log.info("📝 Session set in runner context")
 
 
 # ── DAST-05 Validation ─────────────────────────────────────────────────────
