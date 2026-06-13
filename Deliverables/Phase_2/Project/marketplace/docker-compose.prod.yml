@@ -33,7 +33,8 @@ services:
     environment:
       SECRET_KEY: ${SECRET_KEY}
       DATABASE_URL: ${DATABASE_URL}
-      APP_ENV: production
+      # Defaults to production (no /docs); override via .env for local testing.
+      APP_ENV: ${APP_ENV:-production}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
     depends_on:
       db:
