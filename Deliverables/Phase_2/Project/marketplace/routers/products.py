@@ -5,8 +5,8 @@ from typing import List, Optional
 
 from core.dependencies import get_db
 from middleware.auth import get_current_user
-from models.models import Product, User, ProductStatus
-from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate
+from models.models import Product, User, ProductStatus, Review, Order, OrderStatus
+from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate, ReviewCreate, ReviewResponse
 
 import logging
 
@@ -174,3 +174,94 @@ def reduce_product_stock(
     db.commit()
     db.refresh(product)
     return product
+
+
+# ── Review Endpoints ──────────────────────────────────────────────────────────
+
+@router.post("/{product_id}/reviews", response_model=ReviewResponse, status_code=status.HTTP_201_CREATED)
+def create_review(
+    product_id: UUID,
+    review_in: ReviewCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a product review. Only buyers who purchased the product can review."""
+    from models.models import OrderItem
+    
+    # Verify product exists
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    # Verify buyer has purchased this specific product (in a delivered order)
+    purchase = db.query(OrderItem).join(Order).filter(
+        Order.buyer_id == current_user.id,
+        OrderItem.product_id == product_id,
+        Order.status == OrderStatus.delivered,
+    ).first()
+    if not purchase:
+        raise HTTPException(
+            status_code=403,
+            detail="You must purchase and receive this product before reviewing"
+        )
+    
+    # Check if buyer already reviewed this product
+    existing_review = db.query(Review).filter(
+        Review.product_id == product_id,
+        Review.buyer_id == current_user.id,
+    ).first()
+    if existing_review:
+        raise HTTPException(
+            status_code=409,
+            detail="You have already reviewed this product"
+        )
+    
+    # Create review
+    review = Review(
+        product_id=product_id,
+        buyer_id=current_user.id,
+        rating=review_in.rating,
+        comment=review_in.comment,
+    )
+    db.add(review)
+    db.commit()
+    db.refresh(review)
+    return review
+
+
+@router.get("/{product_id}/reviews", response_model=List[ReviewResponse])
+def list_reviews(
+    product_id: UUID,
+    skip: int = 0,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
+    """List all reviews for a product."""
+    # Verify product exists
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    reviews = db.query(Review).filter(
+        Review.product_id == product_id,
+    ).order_by(Review.created_at.desc()).offset(skip).limit(limit).all()
+    
+    return reviews
+
+
+@router.get("/{product_id}/reviews/my", response_model=ReviewResponse)
+def get_my_review(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get current user's review for a product (if exists)."""
+    review = db.query(Review).filter(
+        Review.product_id == product_id,
+        Review.buyer_id == current_user.id,
+    ).first()
+    
+    if not review:
+        raise HTTPException(status_code=404, detail="No review found")
+    
+    return review
