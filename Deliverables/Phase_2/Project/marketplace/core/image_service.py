@@ -133,6 +133,10 @@ def build_safe_path(filename: str) -> Path:
 
     Raises ``ValueError`` if the resolved path escapes the upload directory.
     """
+    # Reject null bytes — they can truncate paths in C-based runtimes
+    if "\x00" in filename:
+        raise ValueError("Invalid filename: null bytes detected")
+
     upload_dir = _get_upload_dir()
     # Reject obvious traversal patterns before resolving
     if ".." in filename or filename.startswith("/") or filename.startswith("\\"):
@@ -151,7 +155,13 @@ def save_file(content: bytes, path: Path) -> None:
     """Write *content* to *path* atomically and set permissions to ``0640``.
 
     Uses write-to-temp-then-rename to avoid partial writes.
+    Rejects symlink targets to prevent symlink-following attacks.
     """
+    # Reject symlink targets — an attacker could plant a symlink to
+    # redirect writes outside the upload directory
+    if path.is_symlink():
+        raise ValueError("Invalid target path: symlink detected")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     try:
@@ -173,13 +183,33 @@ def delete_file(path: Path) -> None:
     resolved.unlink(missing_ok=True)
 
 
+def validate_upload_filename(filename: str) -> None:
+    """Reject filenames that contain path-traversal or injection patterns.
+
+    Raises ``ValueError`` for filenames containing ``..``, null bytes,
+    absolute path prefixes, or other dangerous patterns.
+    This runs on the **user-supplied** original filename before any
+    processing, providing an early-rejection layer.
+    """
+    if not filename:
+        raise ValueError("Filename must not be empty")
+    if "\x00" in filename:
+        raise ValueError("Invalid filename: null bytes detected")
+    if ".." in filename:
+        raise ValueError("Invalid filename: path traversal detected")
+    if filename.startswith("/") or filename.startswith("\\"):
+        raise ValueError("Invalid filename: absolute path not allowed")
+
+
 def sanitize_original_filename(filename: str) -> str:
     """Return a safe version of the user-provided original filename.
 
-    Strips path components and limits length.
+    Strips null bytes, path components, and limits length.
     """
+    # Strip null bytes before any path processing
+    safe = filename.replace("\x00", "")
     # Take only the basename (no directory components)
-    safe = Path(filename).name
+    safe = Path(safe).name
     # Limit length
     if len(safe) > 255:
         safe = safe[:255]

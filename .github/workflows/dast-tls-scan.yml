@@ -1,0 +1,213 @@
+# =============================================================================
+# DAST TLS Scan – testssl.sh
+# =============================================================================
+# Scans a target domain for TLS/SSL configuration issues:
+#   • Deprecated protocol versions (SSLv2, SSLv3, TLS 1.0, TLS 1.1)
+#   • Weak or insecure cipher suites (RC4, DES, 3DES, NULL, EXPORT, anon)
+#   • Certificate validity problems
+#
+# Trigger: manual only (workflow_dispatch) – provide the target domain as
+#          an input parameter.
+#
+# Produces a DAST-06 structured validation result alongside the raw
+# testssl.sh JSON and CSV reports.
+# =============================================================================
+
+name: "DAST – TLS Scan (testssl.sh)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_domain:
+        description: "Domain to scan, e.g. staging.example.com"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tls-scan:
+    name: testssl.sh TLS Scan
+    runs-on: ubuntu-latest
+    env:
+      TARGET_DOMAIN: ${{ github.event.inputs.target_domain }}
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Install testssl.sh ─────────────────────────────────────────
+      - name: Clone testssl.sh
+        run: |
+          git clone --depth 1 https://github.com/drwetter/testssl.sh.git
+
+      # ── 3. Run testssl.sh against the target domain ──────────────────
+      - name: Run testssl.sh
+        run: |
+          ./testssl.sh/testssl.sh \
+            --jsonfile testssl-report.json \
+            --csvfile testssl-report.csv \
+            --severity LOW \
+            --protocols \
+            --server-defaults \
+            --server-preference \
+            --standard \
+            --vulnerable \
+            "$TARGET_DOMAIN" || true
+          # testssl.sh exits non-zero when it finds issues; we handle
+          # pass/fail ourselves in the validation step below.
+
+      # ── 4. Validate TLS scan results (DAST-06) ───────────────────────
+      - name: Validate TLS results (DAST-06)
+        run: |
+          set -euo pipefail
+
+          REPORT="testssl-report.json"
+          RESULT_FILE="dast-06-results.json"
+          FAIL=0
+
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  DAST-06 · TLS Configuration Validation"
+          echo "  Target : $TARGET_DOMAIN"
+          echo "═══════════════════════════════════════════════════════════"
+
+          if [ ! -f "$REPORT" ]; then
+            echo "❌ testssl report not found at ${REPORT}"
+            exit 1
+          fi
+
+          # ── Helper: search for a pattern and fail if found ──────────
+          check_not_offered() {
+            local label="$1"   # Human-readable name
+            local pattern="$2" # jq-compatible regex for the 'id' field
+            local matches
+            matches=$(jq -r \
+              --arg pat "$pattern" \
+              '[.[] | select(.id | test($pat)) | select(.finding | test("offered|yes|true"; "i"))] | length' \
+              "$REPORT" 2>/dev/null || echo "0")
+
+            if [ "$matches" -gt 0 ]; then
+              echo "❌ FAIL – ${label} is offered (${matches} match(es))"
+              FAIL=1
+            else
+              echo "✅ PASS – ${label} is NOT offered"
+            fi
+          }
+
+          # ── 4a. Deprecated protocol versions ────────────────────────
+          echo ""
+          echo "── Protocol Version Checks ─────────────────────────────"
+          check_not_offered "SSLv2"    "^SSLv2$"
+          check_not_offered "SSLv3"    "^SSLv3$"
+          check_not_offered "TLS 1.0"  "^TLS1$"
+          check_not_offered "TLS 1.1"  "^TLS1_1$"
+
+          # Verify TLS 1.2+ is available
+          TLS12=$(jq -r \
+            '[.[] | select(.id == "TLS1_2") | select(.finding | test("offered|yes|true"; "i"))] | length' \
+            "$REPORT" 2>/dev/null || echo "0")
+          if [ "$TLS12" -gt 0 ]; then
+            echo "✅ PASS – TLS 1.2 is offered"
+          else
+            echo "⚠️  WARN – TLS 1.2 not detected (may still be OK if only TLS 1.3)"
+          fi
+
+          # ── 4b. Weak cipher suites ─────────────────────────────────
+          echo ""
+          echo "── Cipher Suite Checks ─────────────────────────────────"
+
+          WEAK_CIPHERS=$(jq -r \
+            '[.[] | select(.id | test("cipher"; "i")) | select(.finding | test("RC4|DES|3DES|NULL|EXPORT|anon|ADH|AECDH"; "i"))] | length' \
+            "$REPORT" 2>/dev/null || echo "0")
+
+          if [ "$WEAK_CIPHERS" -gt 0 ]; then
+            echo "❌ FAIL – ${WEAK_CIPHERS} weak cipher(s) detected (RC4/DES/3DES/NULL/EXPORT/anon)"
+            FAIL=1
+          else
+            echo "✅ PASS – No weak ciphers detected"
+          fi
+
+          # ── 4c. Certificate validity ───────────────────────────────
+          echo ""
+          echo "── Certificate Checks ──────────────────────────────────"
+
+          CERT_ISSUES=$(jq -r \
+            '[.[] | select(.id | test("cert"; "i")) | select(.severity | test("CRITICAL|HIGH|MEDIUM"; "i"))] | length' \
+            "$REPORT" 2>/dev/null || echo "0")
+
+          if [ "$CERT_ISSUES" -gt 0 ]; then
+            echo "❌ FAIL – ${CERT_ISSUES} certificate issue(s) with severity ≥ MEDIUM"
+            FAIL=1
+          else
+            echo "✅ PASS – No significant certificate issues"
+          fi
+
+          # ── 4d. Known vulnerabilities ──────────────────────────────
+          echo ""
+          echo "── Vulnerability Checks ────────────────────────────────"
+
+          VULN_ISSUES=$(jq -r \
+            '[.[] | select(.id | test("BEAST|BREACH|CRIME|DROWN|FREAK|Logjam|POODLE|ROBOT|Heartbleed|CCS|ticketbleed|LUCKY13|Sweet32|GREASE"; "i")) | select(.severity | test("CRITICAL|HIGH|MEDIUM"; "i"))] | length' \
+            "$REPORT" 2>/dev/null || echo "0")
+
+          if [ "$VULN_ISSUES" -gt 0 ]; then
+            echo "❌ FAIL – ${VULN_ISSUES} known TLS vulnerability/vulnerabilities detected"
+            FAIL=1
+          else
+            echo "✅ PASS – No known TLS vulnerabilities detected"
+          fi
+
+          # ── Write structured DAST-06 result ────────────────────────
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+
+          jq -n \
+            --arg domain "$TARGET_DOMAIN" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson fail "$FAIL" \
+            --argjson weak_ciphers "$WEAK_CIPHERS" \
+            --argjson cert_issues "$CERT_ISSUES" \
+            --argjson vuln_issues "$VULN_ISSUES" \
+            '{
+              test_id: "DAST-06",
+              test_name: "TLS Configuration Scan",
+              target: $domain,
+              timestamp: $date,
+              result: (if $fail == 0 then "PASS" else "FAIL" end),
+              details: {
+                deprecated_protocols_found: (if $fail == 0 then false else true end),
+                weak_ciphers_count: $weak_ciphers,
+                certificate_issues_count: $cert_issues,
+                known_vulnerabilities_count: $vuln_issues
+              }
+            }' > "$RESULT_FILE"
+
+          echo "📄 DAST-06 result written to ${RESULT_FILE}"
+          cat "$RESULT_FILE"
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo ""
+            echo "❌ DAST-06: TLS scan FAILED – see details above"
+            exit 1
+          else
+            echo ""
+            echo "✅ DAST-06: TLS scan PASSED"
+          fi
+
+      # ── 5. Upload testssl reports ─────────────────────────────────────
+      - name: Upload TLS scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tls-scan-reports
+          path: |
+            testssl-report.json
+            testssl-report.csv
+            dast-06-results.json
+          retention-days: 30
