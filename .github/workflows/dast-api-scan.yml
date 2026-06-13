@@ -154,7 +154,7 @@ jobs:
       # ── 10. Upload ZAP reports ────────────────────────────────────────
       - name: Upload ZAP reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zap-api-scan-report
           path: |
@@ -165,7 +165,7 @@ jobs:
       # ── 11. Upload DAST-05 auth test results ──────────────────────────
       - name: Upload DAST-05 auth test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dast-05-auth-test-results
           path: dast-05-results.json
