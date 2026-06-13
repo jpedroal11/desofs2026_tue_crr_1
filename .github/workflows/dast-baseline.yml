@@ -1,0 +1,141 @@
+# =============================================================================
+# DAST Baseline Scan – OWASP ZAP Passive Scan
+# =============================================================================
+# Runs a passive (non-intrusive) ZAP scan against the running API on every
+# push / PR to main or develop.  Passive scans analyse responses only – they
+# never inject payloads – so they are safe for every build.
+#
+# Related files:
+#   - Deliverables/Phase_2/Project/marketplace/zap/zap-baseline-rules.conf
+#   - Deliverables/Phase_2/Project/marketplace/zap/validate-dast-results.py
+# =============================================================================
+
+name: "DAST – ZAP Baseline Scan"
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zap-baseline:
+    name: ZAP Passive Baseline Scan
+    runs-on: ubuntu-latest
+
+    # ── Postgres service container ──────────────────────────────────────
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_marketplace
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_marketplace"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Build the application Docker image ─────────────────────────
+      - name: Build application Docker image
+        run: |
+          docker build \
+            -t marketplace-dast:latest \
+            Deliverables/Phase_2/Project/marketplace/
+
+      # ── 3. Start the application container ────────────────────────────
+      # Using --network host so the app can reach Postgres on localhost:5432
+      # and ZAP (also on the host) can reach the app on localhost:8000.
+      - name: Start application container
+        run: |
+          docker run -d \
+            --name marketplace-app \
+            --network host \
+            -e SECRET_KEY="dast-test-secret-key-minimum-32-bytes-long" \
+            -e DATABASE_URL="postgresql://test_user:test_password@localhost:5432/test_marketplace" \
+            -e APP_ENV="test" \
+            -e CORS_ALLOW_ORIGINS="http://localhost:8000" \
+            marketplace-dast:latest
+
+      # ── 4. Wait for the app to become healthy ─────────────────────────
+      - name: Wait for application health check
+        run: |
+          echo "Waiting for application to start..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/ > /dev/null 2>&1; then
+              echo "✅ Application is healthy (attempt ${i}/30)"
+              exit 0
+            fi
+            echo "  Attempt ${i}/30 – not ready yet, retrying in 2 s..."
+            sleep 2
+          done
+          echo "❌ Application failed to start within 60 seconds"
+          docker logs marketplace-app
+          exit 1
+
+      # ── 5. Run OWASP ZAP Baseline Scan ───────────────────────────────
+      # The baseline scan only runs passive rules against spidered pages.
+      # -a  → include alpha-quality passive rules
+      # -j  → use the AJAX spider in addition to the traditional spider
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: "http://localhost:8000"
+          rules_file_name: "Deliverables/Phase_2/Project/marketplace/zap/zap-baseline-rules.conf"
+          cmd_options: "-a -j"
+          allow_issue_writing: false
+          fail_action: "warn"
+
+      # ── 6. Install Python deps for validation script ────────────────────
+      - name: Install validation dependencies
+        if: always()
+        run: pip install httpx
+
+      # ── 7. Validate DAST results with custom script ───────────────────
+      - name: Validate DAST results
+        if: always()
+        run: |
+          # Find the ZAP JSON report (the action writes to the workspace)
+          REPORT=$(find . /zap/wrk/ -maxdepth 1 -name '*.json' -not -name 'dast-*' 2>/dev/null | head -1)
+          if [ -n "$REPORT" ]; then
+            python Deliverables/Phase_2/Project/marketplace/zap/validate-dast-results.py \
+              --mode baseline \
+              --report "$REPORT" \
+              --url http://localhost:8000
+          else
+            echo "⚠️  No ZAP JSON report found — skipping validation"
+          fi
+
+      # ── 8. Upload ZAP reports as artifacts ────────────────────────────
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: |
+            /zap/wrk/
+            dast-results-summary.json
+          retention-days: 30
+
+      # ── 9. Cleanup containers ─────────────────────────────────────────
+      - name: Cleanup containers
+        if: always()
+        run: |
+          docker stop marketplace-app 2>/dev/null || true
+          docker rm marketplace-app 2>/dev/null || true

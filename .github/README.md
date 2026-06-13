@@ -126,6 +126,9 @@ Automated dependency updates running **every Monday at 09:00 UTC+0 (Lisbon timez
 | **pip-audit** | CVE detection in dependencies | Yes | JSON report |
 | **CycloneDX** | SBOM generation & validation | No | JSON/XML SBOM |
 | **Dependabot** | Automated dependency updates | No | PRs for review |
+| **ZAP Baseline** | DAST passive scan (headers, info leakage) | Yes | HTML + JSON report |
+| **ZAP API Scan** | DAST active scan (SQLi, XSS, traversal, auth) | Yes | HTML + JSON report |
+| **testssl.sh** | TLS configuration validation | Yes | JSON + CSV report |
 
 ---
 
@@ -140,8 +143,91 @@ Automated dependency updates running **every Monday at 09:00 UTC+0 (Lisbon timez
    - Click on a specific run to download artifacts (under "Artifacts" section)
 
 3. **Reports Retention:**
-   - Scan reports: 14 days
+   - SAST/SCA scan reports: 14 days
+   - DAST scan reports: 30 days
    - SBOM: 90 days
+
+---
+
+## Dynamic Application Security Testing (DAST)
+
+Three DAST workflows cover the seven test cases from Table 41:
+
+| Test ID | Test | Scan Mode | Workflow |
+|---------|------|-----------|----------|
+| DAST-01 | SQL Injection on all parameters | Active (API Scan) | `dast-api-scan.yml` |
+| DAST-02 | Reflected & Stored XSS | Active (API Scan) | `dast-api-scan.yml` |
+| DAST-03 | Security Headers (HSTS, CSP, X-Frame-Options, etc.) | Passive (Baseline) | `dast-baseline.yml` |
+| DAST-04 | Path Traversal | Active (API Scan) | `dast-api-scan.yml` |
+| DAST-05 | Auth Bypass (no token / tampered / expired) | Active (Auth Script) | `dast-api-scan.yml` |
+| DAST-06 | TLS Configuration (TLS 1.2+, ciphers, cert chain) | External | `dast-tls-scan.yml` |
+| DAST-07 | Error Information Leakage | Passive + Live Probes | `dast-baseline.yml` |
+
+### 5. **DAST Baseline Scan** (`workflows/dast-baseline.yml`)
+**Triggers:** Push/PR to `main`/`develop`, Manual dispatch
+
+Passive (non-intrusive) scan that runs on every build:
+
+- Builds the Docker image and starts the app + Postgres
+- Runs OWASP ZAP baseline scan with custom rule configuration
+- **DAST-03:** Validates all 5 required security headers are present (HSTS, X-Content-Type-Options, X-Frame-Options, CSP, Cache-Control) — **build-breaking**
+- **DAST-07:** Checks for information leakage + runs live error-response probes to detect stack traces
+- Custom validation script parses results and generates a DAST summary report
+
+**Configuration:** `Deliverables/Phase_2/Project/marketplace/zap/zap-baseline-rules.conf`
+**Artifacts:** ZAP HTML/JSON reports + DAST summary (30-day retention)
+
+---
+
+### 6. **DAST API Scan** (`workflows/dast-api-scan.yml`)
+**Triggers:** Manual dispatch (`workflow_dispatch`) — intended for sprint-end testing
+
+Authenticated active scan using the FastAPI-generated OpenAPI spec:
+
+- Registers a test user and obtains a JWT token
+- Injects the token into all ZAP requests via the Replacer add-on
+- **DAST-01:** SQL injection on all query, path, and body parameters — **build-breaking**
+- **DAST-02:** Reflected and stored XSS on all text input fields — **build-breaking**
+- **DAST-04:** Path traversal on all file-related endpoints — **build-breaking**
+- **DAST-05:** Tests all protected endpoints with no auth, tampered token, and expired token — all must return 401/403
+- Custom validation script categorizes ZAP alerts by DAST test ID
+
+**Note on DAST-04:** ZAP's automated scanner covers common path traversal vectors. Edge cases (symlinks, OS-specific separators) require manual follow-up, as specified in Table 41 ("ZAP + Manual").
+
+**Configuration:** `Deliverables/Phase_2/Project/marketplace/zap/zap-api-rules.conf`
+**Artifacts:** ZAP HTML/JSON reports + DAST-05 auth results + DAST summary (30-day retention)
+
+---
+
+### 7. **DAST TLS Scan** (`workflows/dast-tls-scan.yml`)
+**Triggers:** Manual dispatch with required `target_domain` input parameter
+
+TLS/SSL configuration scan against the staging or production domain:
+
+- Uses `testssl.sh` to scan the target domain
+- **DAST-06:** Validates TLS 1.2+ is offered, no deprecated protocols (SSLv2/3, TLS 1.0/1.1), no weak ciphers (RC4, DES, 3DES, NULL, EXPORT, anon), valid certificate chain, and no known vulnerabilities (BEAST, DROWN, Heartbleed, etc.)
+- Inline validation script produces a structured DAST-06 result
+
+**Artifacts:** testssl.sh JSON/CSV + DAST-06 results (30-day retention)
+
+**How to trigger:**
+1. Go to **Actions** → **DAST – TLS Scan (testssl.sh)**
+2. Click **Run workflow**
+3. Enter the target domain (e.g., `staging.marketplace.example.com`)
+
+---
+
+### DAST Supporting Files
+
+All DAST configuration and scripts live in `Deliverables/Phase_2/Project/marketplace/zap/`:
+
+| File | Purpose |
+|------|---------|
+| `zap-baseline-rules.conf` | ZAP passive scan rule configuration (IGNORE/WARN/FAIL) |
+| `zap-api-rules.conf` | ZAP active scan rule configuration (IGNORE/WARN/FAIL) |
+| `dast-docker-compose.yml` | Docker Compose for local DAST testing |
+| `zap-auth-script.py` | Authentication + DAST-05 token-tampering validation |
+| `validate-dast-results.py` | ZAP results parser and DAST verdict engine |
 
 ---
 
@@ -151,7 +237,7 @@ To run these checks locally before pushing:
 
 ```bash
 # Install tools
-pip install bandit[toml] semgrep pip-audit cyclonedx-bom
+pip install bandit[toml] semgrep pip-audit cyclonedx-bom httpx
 
 # Run Bandit
 bandit --recursive . --severity-level medium --confidence-level medium
@@ -160,11 +246,20 @@ bandit --recursive . --severity-level medium --confidence-level medium
 semgrep scan --config "p/python" --config "p/flask" --config "p/owasp-top-ten" --config "p/secrets" .
 
 # Run pip-audit
-pip-audit --requirement Phase_2/Project/marketplace/requirements.txt
+pip-audit --requirement Deliverables/Phase_2/Project/marketplace/requirements.txt
 
 # Run tests with coverage
-cd Phase_2/Project/marketplace
+cd Deliverables/Phase_2/Project/marketplace
 pytest tests/ --cov=. --cov-report=term-missing
+
+# Run DAST locally (requires Docker)
+cd Deliverables/Phase_2/Project/marketplace
+docker compose -f zap/dast-docker-compose.yml up -d --build
+# Wait for app to start, then:
+python zap/zap-auth-script.py --url http://localhost:8000
+# For ZAP scans, install and run ZAP Desktop or use the Docker image:
+# docker run -t ghcr.io/zaproxy/zaproxy zap-baseline.py -t http://localhost:8000
+docker compose -f zap/dast-docker-compose.yml down -v
 ```
 
 ---
