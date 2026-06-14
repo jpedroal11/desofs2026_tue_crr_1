@@ -11,6 +11,8 @@ from models.models import Product, ProductImage, User, ProductStatus
 from schemas.schemas import ProductImageResponse
 from services import image_use_case
 
+from services.log_service import write_audit_log
+
 router = APIRouter(tags=["Images"])
 
 
@@ -81,6 +83,15 @@ def serve_product_image_authenticated(
     try:
         safe_path = image_service.build_safe_path(filename)
     except ValueError as exc:
+        write_audit_log(
+            action="ACCESS_IMAGE",
+            resource="PRODUCT_IMAGE",
+            result="error",
+            user_id=None,
+            resource_id=None,
+            message=f"Invalid image filename: {filename}",
+            db=db
+        )
         raise HTTPException(status_code=400, detail=str(exc))
 
     # ── Check if the product exists ────────────────────────────────────────
@@ -98,6 +109,16 @@ def serve_product_image_authenticated(
         .first()
     )
     if not db_image or not safe_path.is_file():
+    if not safe_path.is_file():
+        write_audit_log(
+            action="ACCESS_IMAGE",
+            resource="PRODUCT_IMAGE",
+            result="error",
+            user_id=None,
+            resource_id=None,
+            message=f"Image not found: {filename}",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Image not found")
 
     # ── Verify permissions ────────────────────────────────────────────────
@@ -130,6 +151,15 @@ def list_product_images(product_id: UUID, db: Session = Depends(get_db)):
     """List all images for a product."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="LIST_PRODUCT_IMAGES",
+            resource="PRODUCT_IMAGE",
+            result="error",
+            user_id=None,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
 
     return (
@@ -152,8 +182,26 @@ def delete_product_image(
     """Delete a product image. Only the product owner can delete."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="DELETE_PRODUCT_IMAGE",
+            resource="PRODUCT_IMAGE",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
     if product.seller_id != current_user.id:
+        write_audit_log(
+            action="DELETE_PRODUCT_IMAGE",
+            resource="PRODUCT_IMAGE",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Not allowed to delete images for this product",
+            db=db
+        )
         raise HTTPException(
             status_code=403, detail="Not allowed to delete images for this product"
         )
@@ -167,6 +215,15 @@ def delete_product_image(
         .first()
     )
     if not db_image:
+        write_audit_log(
+            action="DELETE_PRODUCT_IMAGE",
+            resource="PRODUCT_IMAGE",
+            result="error",
+            user_id=current_user.id,
+            resource_id=image_id,
+            message=f"Image not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Image not found")
 
     # ── Remove file from disk ─────────────────────────────────────────────

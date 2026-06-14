@@ -315,12 +315,30 @@ def test_refresh_returns_new_access_token(client):
 
     r = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     assert r.status_code == 200
-    new_access = r.json()["access_token"]
+    body = r.json()
+    new_access = body["access_token"]
+    new_refresh = body["refresh_token"]
     assert new_access and new_access != tokens["access_token"]
+    # Rotation — the refresh token must also change
+    assert new_refresh and new_refresh != tokens["refresh_token"]
 
     assert client.get(
         "/auth/me", headers={"Authorization": f"Bearer {new_access}"}
     ).status_code == 200
+
+
+def test_refresh_token_rotation_makes_old_token_single_use(client):
+    """After a successful /refresh the presented refresh token must not work
+    again — that's how refresh-token theft becomes detectable."""
+    _register(client)
+    tokens = client.post(
+        "/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD}
+    ).json()
+    old_refresh = tokens["refresh_token"]
+
+    assert client.post("/auth/refresh", json={"refresh_token": old_refresh}).status_code == 200
+    # Second use of the same refresh token must be rejected
+    assert client.post("/auth/refresh", json={"refresh_token": old_refresh}).status_code == 401
 
 
 def test_refresh_with_access_token_rejected(client):
@@ -346,6 +364,22 @@ def test_password_reset_request_existing_email(client):
     assert r.status_code == 200
     body = r.json()
     assert "_dev_token" in body
+
+
+def test_password_reset_request_no_dev_token_in_production(client, monkeypatch):
+    """In APP_ENV=production the raw reset token must not appear in the HTTP
+    response — it should only ever be delivered by email."""
+    import routers.auth as auth_router
+
+    class _ProdSettings:
+        app_env = "production"
+
+    monkeypatch.setattr(auth_router, "get_settings", lambda: _ProdSettings())
+
+    _register(client)
+    r = client.post("/auth/password-reset/request", json={"email": "bob@x.com"})
+    assert r.status_code == 200
+    assert "_dev_token" not in r.json()
 
 
 def test_password_reset_request_unknown_email_same_response(client):
@@ -418,6 +452,53 @@ def test_password_reset_expired_token(client, db_session):
     assert r.status_code == 400
 
 
+def test_password_reset_invalidates_existing_tokens(client):
+    """After a password reset, previously-issued access/refresh tokens must be
+    rejected (ASVS V6 — existing sessions terminated on credential change)."""
+    _register(client)
+    tokens = client.post(
+        "/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD}
+    ).json()
+    old_access = tokens["access_token"]
+    old_refresh = tokens["refresh_token"]
+
+    reset_token = client.post(
+        "/auth/password-reset/request", json={"email": "bob@x.com"}
+    ).json()["_dev_token"]
+    assert client.post(
+        "/auth/password-reset/confirm",
+        json={"token": reset_token, "new_password": ANOTHER_GOOD},
+    ).status_code == 200
+
+    assert client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {old_access}"}
+    ).status_code == 401
+    assert client.post(
+        "/auth/refresh", json={"refresh_token": old_refresh}
+    ).status_code == 401
+
+
+def test_logout_blacklists_refresh_token(client):
+    """Logout must also revoke the refresh token, otherwise the user can keep
+    minting new access tokens via /auth/refresh after logging out."""
+    _register(client)
+    tokens = client.post(
+        "/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD}
+    ).json()
+    access = tokens["access_token"]
+    refresh = tokens["refresh_token"]
+
+    r = client.post(
+        "/auth/logout",
+        headers={"Authorization": f"Bearer {access}"},
+        json={"refresh_token": refresh},
+    )
+    assert r.status_code == 200
+
+    r2 = client.post("/auth/refresh", json={"refresh_token": refresh})
+    assert r2.status_code == 401
+
+
 def test_password_reset_clears_lockout(client, db_session):
     _register(client)
     for _ in range(5):
@@ -437,3 +518,27 @@ def test_password_reset_clears_lockout(client, db_session):
     db_session.refresh(user)
     assert user.locked_until is None
     assert user.failed_login_attempts == 0
+
+
+def test_lockout_expires_after_30_minutes(client, db_session):
+    """MST-NEW-02: Lockout should expire after the configured lockout period."""
+    _register(client)
+    # Trigger lockout
+    for _ in range(5):
+        client.post("/auth/login", json={"email": "bob@x.com", "password": "wrong!Pass1234"})
+
+    user = db_session.query(User).filter(User.email == "bob@x.com").first()
+    assert user.locked_until is not None
+
+    # Simulate time passing: set locked_until to the past
+    from datetime import datetime, timezone, timedelta
+    user.locked_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db_session.commit()
+
+    # Now login with correct password should succeed
+    res = client.post("/auth/login", json={"email": "bob@x.com", "password": GOOD_PASSWORD})
+    assert res.status_code == 200
+
+    db_session.refresh(user)
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None

@@ -34,6 +34,7 @@ CREATE TABLE users (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     failed_login_attempts INTEGER NOT NULL DEFAULT 0,
     locked_until TIMESTAMP WITH TIME ZONE,
+    tokens_valid_from TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
@@ -119,6 +120,62 @@ CREATE TABLE password_reset_tokens (
 
 CREATE INDEX idx_password_reset_user ON password_reset_tokens(user_id);
 
+-- Enable UUID generation
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Audit log table
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NULL,
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(100) NULL,
+    resource_id VARCHAR(255) NULL,
+    ip_address VARCHAR(45) NULL,
+    result VARCHAR(20) NOT NULL,
+    metadata JSONB NULL,
+    message VARCHAR(1024) NULL,
+    created_at TIMESTAMP WITH TIME ZONE
+        DEFAULT CURRENT_TIMESTAMP
+        NOT NULL
+);
+
+CREATE INDEX idx_audit_logs_user_id
+ON audit_logs(user_id);
+
+CREATE INDEX idx_audit_logs_action
+ON audit_logs(action);
+
+CREATE INDEX idx_audit_logs_created_at
+ON audit_logs(created_at);
+
+CREATE INDEX idx_audit_logs_result
+ON audit_logs(result);
+CREATE TABLE reviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    buyer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL,
+    comment TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_reviews_created_at ON reviews(created_at);
+
 -- Seed roles
 INSERT INTO roles (name)
 VALUES ('Administrator'), ('Seller'), ('Buyer');
+
+CREATE USER log_writer PASSWORD 'strong_password';
+
+GRANT INSERT, SELECT
+ON audit_logs
+TO log_writer;
+
+REVOKE UPDATE, DELETE
+ON audit_logs
+FROM log_writer;
+
+REVOKE UPDATE, DELETE
+ON audit_logs
+FROM PUBLIC;
