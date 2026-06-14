@@ -11,6 +11,7 @@ still work via the re-exports at the bottom.
 
 from typing import Generator
 
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -19,15 +20,53 @@ from core.config import get_settings
 
 settings = get_settings()
 
-if settings.database_url.startswith("sqlite"):
+
+def enforce_db_tls(db_url: str) -> str:
+    """Enforces TLS policy for database connection string.
+
+    SQLite connections are bypassed.
+    For other databases, it verifies that no insecure sslmodes are configured,
+    and forces sslmode=require if not specified.
+    """
+    if db_url.startswith("sqlite"):
+        return db_url
+
+    parsed = urlparse(db_url)
+    query_params = dict(parse_qsl(parsed.query))
+
+    # Check for lower-cased sslmode keys
+    sslmode_key = next((k for k in query_params if k.lower() == "sslmode"), None)
+
+    if sslmode_key:
+        sslmode_val = query_params[sslmode_key].lower()
+        if sslmode_val in ("disable", "allow", "prefer"):
+            raise ValueError(
+                f"Insecure sslmode='{sslmode_val}' fallback parameter is not allowed. "
+                "Hard-enforced security policy requires TLS (e.g. sslmode=require, verify-ca, verify-full)."
+            )
+        if sslmode_val not in ("require", "verify-ca", "verify-full"):
+            query_params[sslmode_key] = "require"
+    else:
+        # Default to require if not specified
+        query_params["sslmode"] = "require"
+
+    # Reconstruct the connection URL
+    new_query = urlencode(query_params)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+# Validate and secure connection string on startup
+database_url_secured = enforce_db_tls(settings.database_url)
+
+if database_url_secured.startswith("sqlite"):
     engine = create_engine(
-        settings.database_url,
+        database_url_secured,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
 else:
     engine = create_engine(
-        settings.database_url,
+        database_url_secured,
         pool_size=5,
         max_overflow=10,
         pool_recycle=1800,
