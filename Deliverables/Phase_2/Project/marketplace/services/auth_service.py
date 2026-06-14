@@ -218,7 +218,7 @@ def logout_user(access_token: str, db: Session, refresh_token: str | None = None
 
     db.commit()
 
-    user_id = payload.get("sub") if payload else None
+    user_id = uuid.UUID(payload.get("sub")) if payload else None
 
     write_audit_log(
         user_id=user_id,

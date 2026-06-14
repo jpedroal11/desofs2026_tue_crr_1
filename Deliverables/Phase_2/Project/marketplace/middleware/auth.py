@@ -45,7 +45,7 @@ def get_current_user(
 
     jti = payload["jti"]
 
-    user_id = payload.get("sub") if payload else None
+    user_id = _uuid.UUID(payload.get("sub")) if payload else None
     if db.query(TokenBlacklist).filter(TokenBlacklist.jti == jti).first():
         write_audit_log(
             action="GET_CURRENT_USER",
