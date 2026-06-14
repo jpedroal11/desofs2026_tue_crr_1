@@ -5,7 +5,7 @@ Security properties enforced here:
   - HIBP k-anonymity breach check on register & reset
   - No user enumeration (uniform InvalidCredentials for unknown email or wrong
     password) + constant-time verify even when user is missing
-  - Account lockout (5 attempts -> 15-minute lock)
+  - Account lockout (5 attempts -> 30-minute lock)
   - Reset tokens stored only as SHA-256 hashes, single-use, 30-min TTL
   - JWT jti claim enables blacklist-based revocation
   - Refresh tokens carry type=refresh so they cannot be used as access tokens
@@ -40,12 +40,14 @@ from models.models import (
 from schemas.schemas import LoginRequest, UserCreate
 from services.pwned import is_password_breached
 
+from services.log_service import write_audit_log
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Policy constants
 MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
+LOCKOUT_MINUTES = 30
 RESET_TOKEN_EXPIRE_MINUTES = 30
 
 # Real bcrypt hash that nothing matches — used to keep login timing constant
@@ -125,7 +127,15 @@ async def register_user(data: UserCreate, db: Session, allow_admin: bool = False
     db.commit()
     db.refresh(user)
 
-    logger.info("User registered: id=%s roles=%s", user.id, [r.name for r in user.roles])
+    write_audit_log(
+        user_id=user.id,
+        action="REGISTER",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"User registered with roles: {[r.name for r in user.roles]}",
+        db=db
+    )
     return user
 
 
@@ -166,28 +176,68 @@ def login_user(data: LoginRequest, db: Session) -> TokenPair:
     access, _, _ = create_access_token(str(user.id), roles)
     refresh, _, _ = create_refresh_token(str(user.id))
 
-    logger.info("User logged in: id=%s", user.id)
+    write_audit_log(
+        user_id=user.id,
+        action="LOGIN_SUCCESS",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"User logged in: id={user.id}",
+        db=db
+    )
+    
     return TokenPair(access_token=access, refresh_token=refresh)
 
 
 # ── Logout (blacklist the access token) ───────────────────────────────────────
 
-def logout_user(access_token: str, db: Session) -> None:
-    """Idempotent — calling it on an already-invalid token is a no-op."""
+def logout_user(access_token: str, db: Session, refresh_token: str | None = None) -> None:
+    """Idempotent — calling it on an already-invalid token is a no-op.
+
+    Blacklists the access token's jti and, when supplied, the refresh token's jti
+    too. Without revoking the refresh token a logged-out client could still mint
+    new access tokens via /auth/refresh.
+    """
     try:
         payload = decode_access_token(access_token)
     except InvalidTokenError:
-        return
+        payload = None
 
-    expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-    db.merge(TokenBlacklist(jti=payload["jti"], expires_at=expires_at))
+    if payload is not None:
+        expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        db.merge(TokenBlacklist(jti=payload["jti"], expires_at=expires_at))
+
+    if refresh_token:
+        try:
+            r_payload = decode_refresh_token(refresh_token)
+        except InvalidTokenError:
+            r_payload = None
+        if r_payload is not None:
+            r_expires_at = datetime.fromtimestamp(r_payload["exp"], tz=timezone.utc)
+            db.merge(TokenBlacklist(jti=r_payload["jti"], expires_at=r_expires_at))
+
     db.commit()
-    logger.info("Token blacklisted")
+
+    user_id = uuid.UUID(payload.get("sub")) if payload else None
+
+    write_audit_log(
+        user_id=user_id,
+        action="LOGOUT_SUCCESS",
+        resource="USER",
+        resource_id=user_id,
+        result="success",
+        message=f"User logged out. Token Blacklisted",
+        db=db
+    )
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
 
-def refresh_access_token(refresh_token: str, db: Session) -> str:
+def refresh_access_token(refresh_token: str, db: Session) -> TokenPair:
+    """Rotates the refresh token: blacklists the presented one and issues a
+    fresh pair. This lets us detect refresh-token theft (a stolen-but-rotated
+    token will fail on second use) and limits replay windows.
+    """
     try:
         payload = decode_refresh_token(refresh_token)
     except InvalidTokenError:
@@ -200,9 +250,20 @@ def refresh_access_token(refresh_token: str, db: Session) -> str:
     if not user or not user.is_active:
         raise InvalidToken()
 
+    if user.tokens_valid_from is not None:
+        iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+        if iat < _aware(user.tokens_valid_from):
+            raise InvalidToken()
+
+    # Rotate — old refresh jti becomes unusable from this point on
+    old_expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+    db.merge(TokenBlacklist(jti=payload["jti"], expires_at=old_expires_at))
+
     roles = [r.name for r in user.roles]
     new_access, _, _ = create_access_token(str(user.id), roles)
-    return new_access
+    new_refresh, _, _ = create_refresh_token(str(user.id))
+    db.commit()
+    return TokenPair(access_token=new_access, refresh_token=new_refresh)
 
 
 # ── Password reset — request ──────────────────────────────────────────────────
@@ -225,7 +286,17 @@ def request_password_reset(email: str, db: Session) -> str | None:
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
     ))
     db.commit()
-    logger.info("Password reset requested")
+
+    write_audit_log(
+        user_id=user.id,
+        action="PASSWORD_RESET_REQUEST",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"Password reset requested for user: id={user.id}",
+        db=db
+    )
+    
     return raw_token
 
 
@@ -256,10 +327,21 @@ async def confirm_password_reset(token: str, new_password: str, db: Session) -> 
     user.hashed_password = hash_password(new_password)
     user.failed_login_attempts = 0
     user.locked_until = None
+    # Invalidate every existing access/refresh token issued before now —
+    # a password reset must terminate active sessions.
+    user.tokens_valid_from = now
     record.used_at = now
     db.commit()
 
-    logger.info("Password reset completed")
+    write_audit_log(
+        user_id=user.id,
+        action="PASSWORD_RESET_SUCCESS",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"Password reset completed for user: id={user.id}",
+        db=db
+    )
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -268,9 +350,15 @@ def _record_failed_attempt(user: User, db: Session) -> None:
     user.failed_login_attempts += 1
     if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
         user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
-        logger.warning(
-            "Account locked: user_id=%s attempts=%d",
-            user.id, user.failed_login_attempts,
+
+        write_audit_log(
+            user_id=user.id,
+            action="ACCOUNT_LOCKED",
+            resource="USER",
+            resource_id=user.id,
+            result="success",
+            message=f"Account locked: user_id={user.id} attempts={user.failed_login_attempts}",
+            db=db
         )
     db.commit()
 

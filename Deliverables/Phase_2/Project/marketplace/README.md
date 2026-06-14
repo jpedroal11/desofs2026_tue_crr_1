@@ -31,31 +31,71 @@ marketplace/
     └── orders.py            # GET/POST/PATCH/DELETE /orders
 ```
 
-## Setup & Run
+## Running the app
+
+All commands run from the `marketplace/` directory. There are two Docker stacks
+that share the same `Dockerfile` and application code:
+
+| Stack | Command | URL | Use it to |
+|---|---|---|---|
+| **Dev** | `docker compose -f docker-compose.dev.yml up --build` | http://localhost:8000/docs | Develop & test — Swagger enabled, plain HTTP, no proxy |
+| **Prod** | `docker compose -f docker-compose.prod.yml up --build` | https://localhost/ | Verify the hardened edge — Nginx TLS, HSTS, CSP; `/docs` disabled |
+
+Stop a stack with `docker compose -f <file> down` (add `-v` to also remove its
+database volume).
+
+### Dev stack (day-to-day development)
 
 ```bash
-# 1. Install dependencies
+docker compose -f docker-compose.dev.yml up --build
+# → http://localhost:8000/docs  (Swagger UI)
+```
+
+Publishes the app on `:8000` over HTTP with `APP_ENV=development`. Sensible
+defaults are baked in, so it runs with no `.env`. Postgres is exposed on `:5432`
+for a local DB client.
+
+### Prod stack (TLS reverse proxy)
+
+```bash
+cp .env.example .env          # fill in real secrets
+./nginx/generate-dev-certs.sh # self-signed staging certs (or mount real ones)
+docker compose -f docker-compose.prod.yml up --build
+# → https://localhost/  (accept the self-signed cert warning)
+```
+
+Only Nginx is exposed (ports 80/443); the app and database stay on an internal
+network. Nginx terminates TLS, redirects HTTP→HTTPS, and sets HSTS + security
+headers. `/docs` is **off** by default (`APP_ENV` defaults to `production`); see
+[nginx/README.md](nginx/README.md) for details and production certificates.
+
+> **Why `/docs` is blank behind the prod proxy:** the strict
+> `Content-Security-Policy` blocks Swagger's CDN assets by design. Use the dev
+> stack for interactive API exploration.
+
+### Without Docker (local Python)
+
+```bash
 pip install -r requirements.txt
-
-# 2. Run the server (from the marketplace/ directory)
-uvicorn main:app --reload
-
-# 3. Open interactive docs
-open http://localhost:8000/docs
+# SECRET_KEY and DATABASE_URL are REQUIRED — the app refuses to start without them.
+export SECRET_KEY="$(openssl rand -hex 32)"
+export DATABASE_URL="sqlite:///./dev.db"   # or a postgres URL
+export APP_ENV=development
+uvicorn main:app --reload                  # → http://localhost:8000/docs
 ```
 
 ## Environment Variables
 
-| Variable | Default | Description |
+`SECRET_KEY` and `DATABASE_URL` are **required** — there are no insecure
+fallback defaults, so the app will not start if they are unset. See
+[.env.example](.env.example) for the full list used by the Docker stacks.
+
+| Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://user:password@localhost:5432/mydb` | Database connection string |
-| `SECRET_KEY` | (insecure default) | JWT signing secret — **change in production!** |
-
-### PostgreSQL example
-
-```bash
-export DATABASE_URL="postgresql://user:password@localhost/marketplace"
-```
+| `SECRET_KEY` | ✅ | JWT signing secret (≥32 bytes — `openssl rand -hex 32`) |
+| `DATABASE_URL` | ✅ | SQLAlchemy connection string (e.g. `postgresql+psycopg2://…` or `sqlite:///./dev.db`) |
+| `APP_ENV` | — | `development` enables `/docs`; defaults to `production` (docs off) |
+| `CORS_ALLOW_ORIGINS` | — | Comma-separated allowed origins (empty = none) |
 
 ## API Endpoints
 
@@ -69,8 +109,8 @@ export DATABASE_URL="postgresql://user:password@localhost/marketplace"
 ### Users
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/users/` | ❌ | List all active users |
-| GET | `/users/{id}` | ❌ | Get user by ID |
+| GET | `/users/` | ✅ (Admin) | List all active users |
+| GET | `/users/{id}` | ✅ | Get user by ID |
 | PATCH | `/users/{id}` | ✅ | Update own profile |
 | DELETE | `/users/{id}` | ✅ | Soft-delete own account |
 

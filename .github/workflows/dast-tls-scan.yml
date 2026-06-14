@@ -40,7 +40,7 @@ jobs:
     steps:
       # ── 1. Checkout ───────────────────────────────────────────────────
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # ── 2. Install testssl.sh ─────────────────────────────────────────
       - name: Clone testssl.sh
@@ -203,7 +203,7 @@ jobs:
       # ── 5. Upload testssl reports ─────────────────────────────────────
       - name: Upload TLS scan reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tls-scan-reports
           path: |

@@ -12,6 +12,8 @@ from middleware.auth import get_current_user
 from models.models import Order, OrderItem, Product, User, ProductStatus, OrderStatus
 from schemas.schemas import OrderCreate, OrderUpdate, OrderResponse
 
+from services.log_service import write_audit_log
+
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
 logger = logging.getLogger(__name__)
@@ -47,9 +49,37 @@ def get_order(
         .first()
     )
     if not order:
+        write_audit_log(
+            action="GET_ORDER",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Order not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Order not found")
     if order.buyer_id != current_user.id:
+        write_audit_log(
+            action="GET_ORDER",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Not allowed to view this order",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to view this order")
+
+    write_audit_log(
+        action="GET_ORDER",
+        resource="ORDER",
+        result="success",
+        user_id=current_user.id,
+        resource_id=order_id,
+        message=f"Order viewed successfully",
+        db=db
+    )
     return order
 
 
@@ -64,6 +94,15 @@ def create_order(
     All items in the order must be from the same seller.
     """
     if not order_in.items:
+        write_audit_log(
+            action="CREATE_ORDER",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=None,
+            message=f"Order must have at least one item",
+            db=db
+        )
         raise HTTPException(status_code=400, detail="Order must have at least one item")
 
     order_items = []
@@ -77,6 +116,15 @@ def create_order(
         ).first()
 
         if not product:
+            write_audit_log(
+                action="CREATE_ORDER",
+                resource="ORDER",
+                result="error",
+                user_id=current_user.id,
+                resource_id=None,
+                message=f"Product {item_in.product_id} not found or unavailable",
+                db=db
+            )
             raise HTTPException(
                 status_code=404,
                 detail=f"Product {item_in.product_id} not found or unavailable",
@@ -86,12 +134,30 @@ def create_order(
         if seller_id is None:
             seller_id = product.seller_id
         elif seller_id != product.seller_id:
+            write_audit_log(
+                action="CREATE_ORDER",
+                resource="ORDER",
+                result="error",
+                user_id=current_user.id,
+                resource_id=None,
+                message=f"Products in an order must be from the same seller",
+                db=db
+            )
             raise HTTPException(
                 status_code=400,
                 detail="All products in an order must be from the same seller",
             )
         
         if product.stock < item_in.quantity:
+            write_audit_log(
+                action="CREATE_ORDER",
+                resource="ORDER",
+                result="error",
+                user_id=current_user.id,
+                resource_id=None,
+                message=f"Insufficient stock for '{product.name}' (available: {product.stock})",
+                db=db
+            )
             raise HTTPException(
                 status_code=400,
                 detail=f"Insufficient stock for '{product.name}' (available: {product.stock})",
@@ -116,6 +182,15 @@ def create_order(
         total_amount=round(total, 2),
         items=order_items,
     )
+    write_audit_log(
+        action="CREATE_ORDER",
+        resource="ORDER",
+        result="success",
+        user_id=current_user.id,
+        resource_id=order.id,
+        message=f"Order created successfully",
+        db=db
+    )
     db.add(order)
     db.commit()
     db.refresh(order)
@@ -137,6 +212,15 @@ def update_order(
         .first()
     )
     if not order:
+        write_audit_log(
+            action="UPDATE_ORDER",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Order not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Order not found")
     order_seller_ids = {
         item.product.seller_id for item in order.items if item.product is not None
@@ -147,11 +231,40 @@ def update_order(
     for field, value in order_in.model_dump(exclude_unset=True).items():
         if field == "status":
             if not seller_can_update_status:
+                write_audit_log(
+                    action="UPDATE_ORDER_STATUS",
+                    resource="ORDER",
+                    result="error",
+                    user_id=current_user.id,
+                    resource_id=order_id,
+                    message=f"Not allowed to change order status",
+                    db=db
+                )
                 raise HTTPException(status_code=403, detail="Not allowed to change order status")
+            if not _is_valid_status_transition(order.status, value):
+                raise HTTPException(status_code=400, detail="Invalid order status transition")
         elif field == "shipping_address":
             if not buyer_can_update or order.status != OrderStatus.pending:
+                write_audit_log(
+                    action="UPDATE_ORDER_SHIPPING_ADDRESS",
+                    resource="ORDER",
+                    result="error",
+                    user_id=current_user.id,
+                    resource_id=order_id,
+                    message=f"Shipping address can only be updated while order is pending",
+                    db=db
+                )
                 raise HTTPException(status_code=403, detail="Shipping address can only be updated while order is pending")
         else:
+            write_audit_log(
+                action="UPDATE_ORDER",
+                resource="ORDER",
+                result="error",
+                user_id=current_user.id,
+                resource_id=order_id,
+                message=f"Cannot update field '{field}'",
+                db=db
+            )
             raise HTTPException(status_code=400, detail=f"Cannot update field '{field}'")
 
     old_status = order.status
@@ -169,24 +282,59 @@ def update_order(
         if old_status != OrderStatus.confirmed and order.status == OrderStatus.confirmed:
             generate_invoice_pdf(order, db)
     except Exception:
-        pass
+        write_audit_log(
+            action="GENERATE_INVOICE",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order.id,
+            message=f"Failed to generate invoice",
+            db=db
+        )
 
+    write_audit_log(
+        action="UPDATE_ORDER",
+        resource="ORDER",
+        result="success",
+        user_id=current_user.id,
+        resource_id=order.id,
+        message=f"Order updated successfully",
+        db=db
+    )
     return order
 
 
 
 @router.get("/{order_id}/invoice")
 def download_invoice(
-    order_id: int,
+    order_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Download invoice PDF for an order. Buyers can download their own invoices; admins can download any."""
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
+        write_audit_log(
+            action="DOWNLOAD_INVOICE",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Order not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Order not found")
 
     if not (current_user.is_admin or order.buyer_id == current_user.id):
+        write_audit_log(
+            action="DOWNLOAD_INVOICE",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Not allowed to download this invoice",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to download this invoice")
 
     from services.invoice_service import invoice_path_for_order, generate_invoice_pdf
@@ -197,9 +345,28 @@ def download_invoice(
             generate_invoice_pdf(order, db)
             path = invoice_path_for_order(order)
         except Exception:
+            write_audit_log(
+                action="DOWNLOAD_INVOICE",
+                resource="ORDER",
+                result="error",
+                user_id=current_user.id,
+                resource_id=order_id,
+                message=f"Not allowed to download this invoice",
+                db=db
+            )
             raise HTTPException(status_code=500, detail="Failed to generate invoice")
 
     filename = os.path.basename(path)
+
+    write_audit_log(
+        action="DOWNLOAD_INVOICE",
+        resource="ORDER",
+        result="success",
+        user_id=current_user.id,
+        resource_id=order_id,
+        message=f"Invoice downloaded successfully",
+        db=db
+    )
     return FileResponse(path, media_type="application/pdf", filename=filename)
 
 
@@ -214,10 +381,37 @@ def cancel_order(
 
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
+        write_audit_log(
+            action="CANCEL_ORDER",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Order not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Order not found")
     if order.buyer_id != current_user.id:
+        write_audit_log(
+            action="CANCEL_ORDER",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Not allowed to cancel this order",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to cancel this order")
     if order.status not in (OrderStatus.pending, OrderStatus.confirmed):
+        write_audit_log(
+            action="CANCEL_ORDER",
+            resource="ORDER",
+            result="error",
+            user_id=current_user.id,
+            resource_id=order_id,
+            message=f"Cannot cancel an order with status '{order.status}'",
+            db=db
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Cannot cancel an order with status '{order.status}'",
@@ -231,3 +425,26 @@ def cancel_order(
 
     order.status = OrderStatus.cancelled
     db.commit()
+    write_audit_log(
+        action="CANCEL_ORDER",
+        resource="ORDER",
+        result="success",
+        user_id=current_user.id,
+        resource_id=order_id,
+        message=f"Order cancelled successfully",
+        db=db
+    )
+
+
+def _is_valid_status_transition(old_status: OrderStatus, new_status: OrderStatus) -> bool:
+    if old_status == new_status:
+        return True
+
+    allowed_transitions = {
+        OrderStatus.pending: {OrderStatus.confirmed, OrderStatus.shipped, OrderStatus.delivered, OrderStatus.cancelled},
+        OrderStatus.confirmed: {OrderStatus.shipped, OrderStatus.delivered, OrderStatus.cancelled},
+        OrderStatus.shipped: {OrderStatus.delivered},
+        OrderStatus.delivered: set(),
+        OrderStatus.cancelled: set(),
+    }
+    return new_status in allowed_transitions.get(old_status, set())

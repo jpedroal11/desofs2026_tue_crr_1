@@ -1,0 +1,2 @@
+# Certificates are generated/mounted at runtime and are gitignored.
+# This file only keeps the directory present so the compose bind-mount works.

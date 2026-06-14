@@ -50,8 +50,12 @@ class UserCreate(UserBase):
 
 
 class UserUpdate(BaseModel):
+    """Self-service profile update. `is_active` is intentionally omitted —
+    flipping it via this endpoint would let a user lock themselves out
+    (self-DoS) without ever being able to flip it back. Account activation
+    state is owned by admin/soft-delete flows only.
+    """
     full_name: Optional[str] = None
-    is_active: Optional[bool] = None
 
 
 class UserResponse(UserBase):
@@ -194,6 +198,13 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """Optional body for /auth/logout. When refresh_token is supplied it is
+    blacklisted alongside the access token so the session is fully terminated.
+    """
+    refresh_token: Optional[str] = None
+
+
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 
@@ -232,3 +243,27 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     user_id: Optional[UUID] = None
+
+
+# ── Review Schemas ───────────────────────────────────────────────────────────
+
+class ReviewCreate(BaseModel):
+    rating: int = Field(ge=1, le=5, description="Rating from 1 to 5 stars")
+    comment: Optional[str] = Field(None, max_length=1000)
+
+
+class ReviewUpdate(BaseModel):
+    rating: Optional[int] = Field(None, ge=1, le=5)
+    comment: Optional[str] = Field(None, max_length=1000)
+
+
+class ReviewResponse(BaseModel):
+    id: UUID
+    product_id: UUID
+    buyer_id: UUID
+    rating: int
+    comment: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

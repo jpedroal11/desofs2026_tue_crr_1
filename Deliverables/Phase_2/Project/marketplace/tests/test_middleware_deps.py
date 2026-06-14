@@ -57,7 +57,7 @@ def test_get_current_user_revoked_token(db_session, buyer_user):
     assert exc.value.status_code == 401
     assert "revoked" in exc.value.detail
 
-def test_require_role():
+def test_require_role(db_session):
     # Require role returns a dependency function
     dep = require_role("Administrator")
     
@@ -65,18 +65,18 @@ def test_require_role():
     admin_user = User(email="admin@test.com", username="admin", hashed_password="pw")
     admin_user._jwt_roles = ["Administrator"]
     
-    assert dep(admin_user) == admin_user
+    assert dep(admin_user, db_session) == admin_user
     
     # User without Admin role
     buyer_user = User(email="buyer@test.com", username="buyer", hashed_password="pw")
     buyer_user._jwt_roles = ["Buyer"]
     
     with pytest.raises(HTTPException) as exc:
-        dep(buyer_user)
+        dep(buyer_user, db_session)
     assert exc.value.status_code == 403
     assert exc.value.detail == "Insufficient permissions"
 
     # User with multiple roles, one matches
     multi_user = User(email="multi@test.com", username="multi", hashed_password="pw")
     multi_user._jwt_roles = ["Buyer", "Administrator"]
-    assert dep(multi_user) == multi_user
+    assert dep(multi_user, db_session) == multi_user

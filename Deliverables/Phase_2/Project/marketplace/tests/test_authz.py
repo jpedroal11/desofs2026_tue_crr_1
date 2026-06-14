@@ -18,10 +18,13 @@ class TestIDOR:
         )
         assert response.status_code == 403
 
-    #def test_buyer_cannot_access_admin_endpoints(self, buyer_client):
-    #    """SR-AUTHZ-01, MST-08"""
-    #    assert buyer_client.get("/users").status_code == 403
-    #    assert buyer_client.get("/audit-log").status_code == 403
+    def test_buyer_cannot_access_admin_endpoints(self, buyer_client):
+        """SR-AUTHZ-01, MST-08"""
+        response = buyer_client.post(
+            f"/auth/user/register",
+            json={"email": "test@example.com", "username": "testuser", "full_name": "Test User", "password": "password123", "roles": ["ADMIN"]}
+        )
+        assert response.status_code == 403
 
     def test_role_field_cannot_be_self_assigned(
         self, buyer_client, seed_buyer
