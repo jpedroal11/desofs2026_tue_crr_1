@@ -26,6 +26,8 @@ from schemas.schemas import (
 )
 from services import auth_service as svc
 
+from services.log_service import write_audit_log
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 _bearer = HTTPBearer(auto_error=True)

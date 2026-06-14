@@ -24,6 +24,8 @@ from core.dependencies import get_db
 from core.security import decode_access_token
 from models.models import TokenBlacklist, User
 
+from services.log_service import write_audit_log
+
 logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 
@@ -42,8 +44,18 @@ def get_current_user(
         _deny("Invalid or expired token")
 
     jti = payload["jti"]
+
+    user_id = _uuid.UUID(payload.get("sub")) if payload else None
     if db.query(TokenBlacklist).filter(TokenBlacklist.jti == jti).first():
-        logger.warning("Revoked token presented")
+        write_audit_log(
+            action="GET_CURRENT_USER",
+            resource="USER",
+            result="error",
+            user_id= user_id,
+            resource_id=user_id,
+            message=f"Revoked token was presented",
+            db=db
+        )
         _deny("Token has been revoked")
 
     user = db.query(User).filter(User.id == _uuid.UUID(payload["sub"])).first()
@@ -58,7 +70,15 @@ def get_current_user(
         if cutoff.tzinfo is None:
             cutoff = cutoff.replace(tzinfo=timezone.utc)
         if iat < cutoff:
-            logger.warning("Request rejected: iat predates revocation cutoff for user=%s", user.id)
+            write_audit_log(
+                action="GET_CURRENT_USER",
+                resource="USER",
+                result="error",
+                user_id=user.id,
+                resource_id=user.id,
+                message=f"Request rejected: iat predates revocation cutoff for user={user.id}",
+                db=db
+            )
             _deny("Token has been revoked")
 
     # Stash roles claim so role checks don't require an extra DB hit
@@ -88,12 +108,17 @@ def require_role(*allowed_role_names: str):
     """
     allowed_lower = {r.lower() for r in allowed_role_names}
 
-    def _check(current_user: User = Depends(get_current_user)) -> User:
+    def _check(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
         user_roles = {r.lower() for r in getattr(current_user, "_jwt_roles", [])}
         if user_roles.isdisjoint(allowed_lower):
-            logger.warning(
-                "RBAC denial: user=%s roles=%s required_one_of=%s",
-                current_user.id, sorted(user_roles), sorted(allowed_lower),
+            write_audit_log(
+                action="REQUIRE_ROLE",
+                resource="USER",
+                result="error",
+                user_id=current_user.id,
+                resource_id=current_user.id,
+                message=f"RBAC denial: user={current_user.id} roles={sorted(user_roles)} required_one_of={sorted(allowed_lower)}",
+                db=db
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

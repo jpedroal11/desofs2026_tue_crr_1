@@ -2,11 +2,12 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Request, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
 from core.dependencies import engine
+from core.request_context import client_ip_context
 from models.models import Base
 from routers import auth, users, products, orders, images
 
@@ -64,3 +65,23 @@ app.include_router(images.router)
 @app.get("/", tags=["Health"])
 def health_check():
     return {"status": "ok", "message": "Marketplace API is running"}
+
+@app.middleware("http")
+async def request_context_middleware(
+    request: Request,
+    call_next
+):
+
+    forwarded = request.headers.get("X-Forwarded-For")
+
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+    else:
+        ip = request.client.host
+
+
+    client_ip_context.set(ip)
+
+    response = await call_next(request)
+
+    return response
