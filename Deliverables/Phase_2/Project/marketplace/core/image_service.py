@@ -168,6 +168,7 @@ def save_file(content: bytes, path: Path) -> None:
         tmp_path.write_bytes(content)
         os.chmod(tmp_path, 0o640)
         tmp_path.rename(path)
+        os.chmod(path, 0o640)
     except Exception:
         # Clean up temp file on failure
         tmp_path.unlink(missing_ok=True)

@@ -328,3 +328,44 @@ def test_invalid_order_status_transition_rejected(client, seller_user, buyer_use
     r2 = client.patch(f"/orders/{order_id}", json={"status": "pending"})
     assert r2.status_code in (400, 422)
     clear_auth(client)
+
+
+def test_generated_pdf_permissions(client, seller_user, buyer_user, db_session):
+    import stat
+    from services.invoice_service import invoice_path_for_order
+    from models.models import Order
+
+    # Seller creates a product
+    authenticate_as(client, seller_user)
+    res = client.post("/products/", json={"name": "InvoiceProd", "price": 5.0, "stock": 5})
+    p_id = res.json()["id"]
+    client.patch(f"/products/{p_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    # Buyer places an order
+    authenticate_as(client, buyer_user)
+    order_res = client.post("/orders/", json={"shipping_address": "Addr", "items": [{"product_id": p_id, "quantity": 1}]})
+    assert order_res.status_code == 201
+    order_id = order_res.json()["id"]
+
+    # Download invoice -> triggers PDF generation
+    r = client.get(f"/orders/{order_id}/invoice")
+    assert r.status_code == 200
+    clear_auth(client)
+
+    # Find file path and verify permissions
+    import os
+    import uuid as std_uuid
+    order = db_session.query(Order).filter(Order.id == std_uuid.UUID(order_id)).first()
+    path = invoice_path_for_order(order)
+    assert os.path.exists(path)
+
+    # Programmatically evaluate file status bits
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    assert mode == 0o640
+
+    # Cleanup generated invoice file
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
