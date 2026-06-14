@@ -40,6 +40,8 @@ from models.models import (
 from schemas.schemas import LoginRequest, UserCreate
 from services.pwned import is_password_breached
 
+from services.log_service import write_audit_log
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -125,7 +127,15 @@ async def register_user(data: UserCreate, db: Session, allow_admin: bool = False
     db.commit()
     db.refresh(user)
 
-    logger.info("User registered: id=%s roles=%s", user.id, [r.name for r in user.roles])
+    write_audit_log(
+        user_id=user.id,
+        action="REGISTER",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"User registered with roles: {[r.name for r in user.roles]}",
+        db=db
+    )
     return user
 
 
@@ -166,7 +176,16 @@ def login_user(data: LoginRequest, db: Session) -> TokenPair:
     access, _, _ = create_access_token(str(user.id), roles)
     refresh, _, _ = create_refresh_token(str(user.id))
 
-    logger.info("User logged in: id=%s", user.id)
+    write_audit_log(
+        user_id=user.id,
+        action="LOGIN_SUCCESS",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"User logged in: id={user.id}",
+        db=db
+    )
+    
     return TokenPair(access_token=access, refresh_token=refresh)
 
 
@@ -198,7 +217,18 @@ def logout_user(access_token: str, db: Session, refresh_token: str | None = None
             db.merge(TokenBlacklist(jti=r_payload["jti"], expires_at=r_expires_at))
 
     db.commit()
-    logger.info("Logout: tokens blacklisted")
+
+    user_id = payload.get("sub") if payload else None
+
+    write_audit_log(
+        user_id=user_id,
+        action="LOGOUT_SUCCESS",
+        resource="USER",
+        resource_id=user_id,
+        result="success",
+        message=f"User logged out. Token Blacklisted",
+        db=db
+    )
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────
@@ -256,7 +286,17 @@ def request_password_reset(email: str, db: Session) -> str | None:
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
     ))
     db.commit()
-    logger.info("Password reset requested")
+
+    write_audit_log(
+        user_id=user.id,
+        action="PASSWORD_RESET_REQUEST",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"Password reset requested for user: id={user.id}",
+        db=db
+    )
+    
     return raw_token
 
 
@@ -293,7 +333,15 @@ async def confirm_password_reset(token: str, new_password: str, db: Session) -> 
     record.used_at = now
     db.commit()
 
-    logger.info("Password reset completed; existing sessions invalidated")
+    write_audit_log(
+        user_id=user.id,
+        action="PASSWORD_RESET_SUCCESS",
+        resource="USER",
+        resource_id=user.id,
+        result="success",
+        message=f"Password reset completed for user: id={user.id}",
+        db=db
+    )
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -302,9 +350,15 @@ def _record_failed_attempt(user: User, db: Session) -> None:
     user.failed_login_attempts += 1
     if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
         user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
-        logger.warning(
-            "Account locked: user_id=%s attempts=%d",
-            user.id, user.failed_login_attempts,
+
+        write_audit_log(
+            user_id=user.id,
+            action="ACCOUNT_LOCKED",
+            resource="USER",
+            resource_id=user.id,
+            result="success",
+            message=f"Account locked: user_id={user.id} attempts={user.failed_login_attempts}",
+            db=db
         )
     db.commit()
 
