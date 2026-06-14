@@ -203,7 +203,7 @@ jobs:
       # ── 5. Upload testssl reports ─────────────────────────────────────
       - name: Upload TLS scan reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tls-scan-reports
           path: |
