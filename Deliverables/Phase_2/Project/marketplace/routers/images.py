@@ -33,15 +33,19 @@ def upload_product_image(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    # ── Read content ──────────────────────────────────────────────────────
-    content = file.file.read()
+    # ── File size limit (10MB) check safely before reading/processing ─────
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
 
-    # ── File size limit (10MB) before any other processing ────────────────
-    if len(content) > 10 * 1024 * 1024:
+    if file_size > 10 * 1024 * 1024:
         raise HTTPException(
             status_code=422,
-            detail="File exceeds maximum allowed size of 10 MB"
+            detail="File exceeds maximum allowed size of 10 MB",
         )
+
+    # ── Read content ──────────────────────────────────────────────────────
+    content = file.file.read()
         
     return image_use_case.upload_product_image(
         db=db,

@@ -684,3 +684,60 @@ class TestMST20Security:
         assert auth_res_buyer_draft.status_code == 403
         clear_auth(client)
 
+
+class TestImageUploadLimitsAsync:
+
+    @pytest.mark.asyncio
+    async def test_upload_exceeds_10mb_async(self, seller_user):
+        """Test that a file payload exceeding 10MB (11MB) is immediately rejected with HTTP 422."""
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+        from middleware.auth import get_current_user
+
+        app.dependency_overrides[get_current_user] = lambda: seller_user
+
+        big_content = b"a" * (11 * 1024 * 1024)
+        files = {"file": ("big_image.png", big_content, "image/png")}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            product_res = await client.post(
+                "/products/",
+                json={"name": "Async Size Limit Prod", "price": 19.99, "stock": 10}
+            )
+            assert product_res.status_code == 201
+            product_id = product_res.json()["id"]
+
+            upload_res = await client.post(f"/products/{product_id}/images", files=files)
+            assert upload_res.status_code == 422
+            assert "exceeds maximum allowed size of 10 MB" in upload_res.json()["detail"]
+
+        app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_upload_valid_5mb_async(self, seller_user, png_bytes):
+        """Test that a valid 5MB PNG file succeeds with HTTP 201/200."""
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+        from middleware.auth import get_current_user
+
+        app.dependency_overrides[get_current_user] = lambda: seller_user
+
+        five_mb_content = png_bytes + b"\x00" * (5 * 1024 * 1024 - len(png_bytes))
+        files = {"file": ("valid_5mb.png", five_mb_content, "image/png")}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            product_res = await client.post(
+                "/products/",
+                json={"name": "Async 5MB Prod", "price": 9.99, "stock": 5}
+            )
+            assert product_res.status_code == 201
+            product_id = product_res.json()["id"]
+
+            upload_res = await client.post(f"/products/{product_id}/images", files=files)
+            assert upload_res.status_code in (200, 201)
+            data = upload_res.json()
+            assert data["mime_type"] == "image/png"
+            assert data["original_filename"] == "valid_5mb.png"
+
+        app.dependency_overrides.clear()
+

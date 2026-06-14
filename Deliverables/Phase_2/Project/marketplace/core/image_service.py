@@ -34,7 +34,7 @@ MIME_TO_EXTENSION: dict[str, str] = {
     "image/webp": ".webp",
 }
 
-MAX_FILE_SIZE: int = 20 * 1024 * 1024  # 20 MB
+MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
 MAX_IMAGES_PER_PRODUCT: int = 10
 UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "uploads")
 
