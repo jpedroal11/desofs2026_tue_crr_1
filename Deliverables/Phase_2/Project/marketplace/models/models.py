@@ -70,7 +70,7 @@ class User(Base):
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Lockout state (5 failed attempts -> 15-minute lock)
+    # Lockout state (5 failed attempts -> 30-minute lock)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -174,6 +174,22 @@ class ProductImage(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     product: Mapped["Product"] = relationship("Product", back_populates="images")
+
+
+class Review(Base):
+    """Product reviews. Each buyer can leave at most one review per product."""
+    __tablename__ = "reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("products.id"), nullable=False)
+    buyer_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-5 stars
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    product: Mapped["Product"] = relationship("Product")
+    buyer: Mapped["User"] = relationship("User")
 
 
 # ── Auth-related tables (owned by Pedro Leal — Sprint 1 user aggregate) ──────

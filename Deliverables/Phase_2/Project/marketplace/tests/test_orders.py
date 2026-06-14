@@ -243,6 +243,35 @@ def test_cancel_order(client, seller_user, buyer_user):
 
 
 
+def test_cannot_cancel_non_pending_order(client, seller_user, buyer_user):
+    """MST-16: Can only cancel orders in pending state."""
+    # Setup
+    authenticate_as(client, seller_user)
+    res = client.post("/products/", json={"name": "CancelTestProd", "price": 10.0, "stock": 5})
+    p_id = res.json()["id"]
+    client.patch(f"/products/{p_id}/status", json={"status": "active"})
+    clear_auth(client)
+
+    # Create order as buyer
+    authenticate_as(client, buyer_user)
+    res = client.post("/orders/", json={"shipping_address": "A", "items": [{"product_id": p_id, "quantity": 1}]})
+    order_id = res.json()["id"]
+    clear_auth(client)
+
+    # Seller marks order as shipped
+    authenticate_as(client, seller_user)
+    res_ship = client.patch(f"/orders/{order_id}", json={"status": "shipped"})
+    assert res_ship.status_code == 200
+    clear_auth(client)
+
+    # Buyer tries to cancel shipped order -> should fail
+    authenticate_as(client, buyer_user)
+    res_cancel = client.delete(f"/orders/{order_id}")
+    assert res_cancel.status_code in (400, 422), f"Expected 400/422 but got {res_cancel.status_code}: {res_cancel.json()}"
+    clear_auth(client)
+
+
+
 def test_invoice_download_only_requester_can_access(client, seller_user, buyer_user, db_session):
     """MST-NEW-05: Only the buyer (or admin) can download an order's invoice."""
     # Create a second buyer in the DB

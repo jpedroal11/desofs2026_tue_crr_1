@@ -232,6 +232,136 @@ class TestSHA256:
 
 
 class TestPathTraversal:
+    """Defence against path-traversal uploads.
+
+    Attack vectors tested:
+      1. Classic ``../`` directory traversal in the uploaded filename.
+      2. Null-byte injection (``\\x00``) to truncate the path.
+      3. Symlink target — a pre-planted symlink inside the upload dir.
+
+    Expected outcomes:
+      • Files are always stored with a UUID name.
+      • No files are written outside the storage root.
+      • HTTP 422 is returned for malicious filenames.
+    """
+
+    # ── 1. Classic directory-traversal filenames ──────────────────────────
+
+    @pytest.mark.parametrize(
+        "malicious_name",
+        [
+            "../../../etc/passwd",
+            "..\\..\\..\\etc\\passwd",
+            "foo/../../../etc/passwd",
+            "../upload_escape.jpg",
+        ],
+    )
+    def test_upload_rejects_traversal_filename(
+        self, client, seller_user, jpeg_bytes, malicious_name
+    ):
+        """Upload with ``../`` in filename must return 422."""
+        product_id = _create_product(client, seller_user)
+        files = {
+            "file": (malicious_name, io.BytesIO(jpeg_bytes), "image/jpeg")
+        }
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 422, (
+            f"Expected 422 for filename '{malicious_name}', got {res.status_code}"
+        )
+        clear_auth(client)
+
+    def test_traversal_upload_writes_no_file_outside_root(
+        self, client, seller_user, jpeg_bytes, tmp_upload_dir
+    ):
+        """Even if the request is rejected, nothing should be written outside uploads/."""
+        product_id = _create_product(client, seller_user)
+        # Attempt the upload
+        files = {
+            "file": ("../../../etc/passwd", io.BytesIO(jpeg_bytes), "image/jpeg")
+        }
+        client.post(f"/products/{product_id}/images", files=files)
+
+        # Verify nothing landed outside the upload dir
+        parent = tmp_upload_dir.parent
+        for child in parent.iterdir():
+            assert child.name == tmp_upload_dir.name or child.name.startswith(
+                "."
+            ), f"Unexpected file outside upload root: {child}"
+        clear_auth(client)
+
+    # ── 2. Null-byte injection ────────────────────────────────────────────
+
+    @pytest.mark.parametrize(
+        "null_name",
+        [
+            "image.jpg\x00.sh",
+            "\x00malicious.jpg",
+            "photo\x00../../../etc/passwd",
+        ],
+    )
+    def test_validate_rejects_null_byte_filename_at_service_layer(
+        self, null_name
+    ):
+        """validate_upload_filename must reject null-byte filenames.
+
+        Note: The HTTP multipart layer strips null bytes before they reach
+        the endpoint, so we test at the service layer for defence-in-depth.
+        """
+        with pytest.raises(ValueError, match="null bytes"):
+            image_service.validate_upload_filename(null_name)
+
+    def test_null_byte_filename_stripped_by_sanitize(self):
+        """sanitize_original_filename must strip null bytes even if they
+        somehow reach the sanitisation step."""
+        result = image_service.sanitize_original_filename("image\x00.jpg")
+        assert "\x00" not in result
+        assert result == "image.jpg"
+
+    def test_build_safe_path_rejects_null_byte_in_filename(self):
+        """build_safe_path must reject filenames containing null bytes."""
+        with pytest.raises(ValueError, match="null bytes"):
+            image_service.build_safe_path("test\x00file.jpg")
+
+    # ── 3. Symlink target attack ──────────────────────────────────────────
+
+    def test_save_rejects_symlink_target(self, tmp_upload_dir, jpeg_bytes):
+        """If a symlink already exists at the target path, save_file must refuse."""
+        from pathlib import Path
+
+        # Plant a symlink inside the upload dir pointing outside
+        symlink_path = tmp_upload_dir / "evil_link.jpg"
+        outside_target = tmp_upload_dir.parent / "pwned.txt"
+        symlink_path.symlink_to(outside_target)
+
+        with pytest.raises(ValueError, match="symlink detected"):
+            image_service.save_file(jpeg_bytes, symlink_path)
+
+        # The outside target must NOT have been created
+        assert not outside_target.exists(), (
+            "File was written through symlink to outside target!"
+        )
+
+    # ── 4. UUID naming guarantee ──────────────────────────────────────────
+
+    def test_uploaded_file_gets_uuid_name_not_original(
+        self, client, seller_user, jpeg_bytes
+    ):
+        """Even with a malicious-looking (but valid) original name, the
+        stored filename is always a UUID."""
+        product_id = _create_product(client, seller_user)
+        files = {
+            "file": ("my_photo.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")
+        }
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 201
+
+        stored_name = res.json()["filename"]
+        stem = stored_name.rsplit(".", 1)[0]
+        parsed = uuid.UUID(stem, version=4)
+        assert str(parsed) == stem, "Stored filename is not a valid UUID"
+        clear_auth(client)
+
+    # ── 5. Existing serve-side traversal tests ────────────────────────────
 
     def test_reject_dotdot_in_serve(self, client):
         res = client.get("/images/../../etc/passwd")
@@ -252,6 +382,34 @@ class TestPathTraversal:
         assert serve_res.status_code == 200
         assert serve_res.headers["content-type"] == "image/jpeg"
         clear_auth(client)
+
+    # ── 6. Unit-level tests for build_safe_path and validate_upload_filename ──
+
+    def test_build_safe_path_rejects_null_bytes(self):
+        """build_safe_path must reject null-byte filenames."""
+        with pytest.raises(ValueError, match="null bytes"):
+            image_service.build_safe_path("file\x00.jpg")
+
+    def test_validate_upload_filename_rejects_empty(self):
+        with pytest.raises(ValueError, match="empty"):
+            image_service.validate_upload_filename("")
+
+    def test_validate_upload_filename_rejects_traversal(self):
+        with pytest.raises(ValueError, match="traversal"):
+            image_service.validate_upload_filename("../../../etc/passwd")
+
+    def test_validate_upload_filename_rejects_null_bytes(self):
+        with pytest.raises(ValueError, match="null bytes"):
+            image_service.validate_upload_filename("file\x00.sh")
+
+    def test_validate_upload_filename_rejects_absolute(self):
+        with pytest.raises(ValueError, match="absolute"):
+            image_service.validate_upload_filename("/etc/passwd")
+
+    def test_sanitize_strips_null_bytes(self):
+        result = image_service.sanitize_original_filename("photo\x00.jpg")
+        assert "\x00" not in result
+        assert result == "photo.jpg"
 
 
 # ── File permissions ─────────────────────────────────────────────────────────

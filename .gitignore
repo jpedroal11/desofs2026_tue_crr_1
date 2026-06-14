@@ -4,3 +4,9 @@
 *.sqlite3
 .env
 *.db
+
+# TLS certificates / private keys — never commit
+*.pem
+*.key
+Deliverables/Phase_2/Project/marketplace/nginx/certs/*
+!Deliverables/Phase_2/Project/marketplace/nginx/certs/.gitkeep

@@ -1,14 +1,19 @@
 import pytest
 from main import app
-from middleware.auth import get_current_user
+from middleware.auth import get_current_user, get_optional_user
 from models.models import ProductStatus
 
 def authenticate_as(client, user):
+    # Override both the strict and the optional auth dependencies so endpoints
+    # that use either (e.g. GET /products/{id} resolves the optional one) see
+    # the authenticated user.
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_optional_user] = lambda: user
 
 def clear_auth(client):
-    if get_current_user in app.dependency_overrides:
-        del app.dependency_overrides[get_current_user]
+    for dep in (get_current_user, get_optional_user):
+        if dep in app.dependency_overrides:
+            del app.dependency_overrides[dep]
 
 def test_create_product(client, seller_user):
     authenticate_as(client, seller_user)

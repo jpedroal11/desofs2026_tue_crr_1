@@ -29,6 +29,12 @@ def upload_product_image(
 ):
     """Upload an image for a product. Only the product owner (seller) can upload."""
     
+    # ── Filename safety check ────────────────────────────────────────────
+    try:
+        image_service.validate_upload_filename(file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     # ── Read content ──────────────────────────────────────────────────────
     content = file.file.read()
 
