@@ -108,7 +108,7 @@ def require_role(*allowed_role_names: str):
     """
     allowed_lower = {r.lower() for r in allowed_role_names}
 
-    def _check(current_user: User = Depends(get_current_user)) -> User:
+    def _check(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
         user_roles = {r.lower() for r in getattr(current_user, "_jwt_roles", [])}
         if user_roles.isdisjoint(allowed_lower):
             write_audit_log(

@@ -65,7 +65,7 @@ def upload_product_image(
 
 
 @router.get("/images/{filename}")
-def serve_image(filename: str):
+def serve_image(filename: str, db: Session = Depends(get_db)):
     """Serve an uploaded image by its UUID filename."""
     # ── Path-safety validation ────────────────────────────────────────────
     try:
@@ -78,7 +78,7 @@ def serve_image(filename: str):
             user_id=None,
             resource_id=None,
             message=f"Invalid image filename: {filename}",
-            db=get_db()
+            db=db
         )
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -90,7 +90,7 @@ def serve_image(filename: str):
             user_id=None,
             resource_id=None,
             message=f"Image not found: {filename}",
-            db=get_db()
+            db=db
         )
         raise HTTPException(status_code=404, detail="Image not found")
 

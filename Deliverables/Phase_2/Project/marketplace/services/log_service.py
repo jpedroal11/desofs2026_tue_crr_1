@@ -25,7 +25,7 @@ def write_audit_log(
         user_id=user_id,
         action=action,
         resource_type=resource,
-        resource_id=resource_id,
+        resource_id=str(resource_id) if resource_id else None,
         ip_address=get_client_ip(),
         result=result,
         message=message,
