@@ -136,21 +136,25 @@ jobs:
       - name: Deploy to VM via SSH
         env:
           IMAGE_URL: ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_ARTIFACT_REGISTRY_LOCATION: ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}
+          APP_SECRET_KEY: ${{ secrets.APP_SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           gcloud compute ssh instance-20260610-173428 \
             --zone=europe-west1-b \
             --project=${{ secrets.GCP_PROJECT_ID }} \
             --command="
-              gcloud auth configure-docker ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev --quiet
-              docker pull $IMAGE_URL
+              gcloud auth configure-docker $GCP_ARTIFACT_REGISTRY_LOCATION-docker.pkg.dev --quiet
+              docker pull ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
               docker stop marketplace || true
               docker rm marketplace || true
               docker run -d \
                 --name marketplace \
                 --restart always \
                 -p 8000:8000 \
-                -e SECRET_KEY='${{ secrets.APP_SECRET_KEY }}' \
-                -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+                -e SECRET_KEY='$APP_SECRET_KEY' \
+                -e DATABASE_URL='$DATABASE_URL' \
                 -e APP_ENV='production' \
-                \$IMAGE_URL
+                ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
             "
