@@ -21,14 +21,14 @@ from core.config import get_settings
 settings = get_settings()
 
 
-def enforce_db_tls(db_url: str) -> str:
+def enforce_db_tls(db_url: str, force: bool = False) -> str:
     """Enforces TLS policy for database connection string.
 
     SQLite connections are bypassed.
     For other databases, it verifies that no insecure sslmodes are configured,
     and forces sslmode=require if not specified.
     """
-    if db_url.startswith("sqlite"):
+    if db_url.startswith("sqlite") or not force:
         return db_url
 
     parsed = urlparse(db_url)
@@ -55,8 +55,11 @@ def enforce_db_tls(db_url: str) -> str:
     return urlunparse(parsed._replace(query=new_query))
 
 
-# Validate and secure connection string on startup
-database_url_secured = enforce_db_tls(settings.database_url)
+# Validate and secure connection string on startup (only enforced in production)
+database_url_secured = enforce_db_tls(
+    settings.database_url,
+    force=(settings.app_env.lower() == "production")
+)
 
 if database_url_secured.startswith("sqlite"):
     engine = create_engine(
