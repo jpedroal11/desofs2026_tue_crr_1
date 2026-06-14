@@ -109,13 +109,12 @@ def serve_product_image_authenticated(
         .first()
     )
     if not db_image or not safe_path.is_file():
-    if not safe_path.is_file():
         write_audit_log(
             action="ACCESS_IMAGE",
             resource="PRODUCT_IMAGE",
             result="error",
-            user_id=None,
-            resource_id=None,
+            user_id=current_user.id,
+            resource_id=product_id,
             message=f"Image not found: {filename}",
             db=db
         )
