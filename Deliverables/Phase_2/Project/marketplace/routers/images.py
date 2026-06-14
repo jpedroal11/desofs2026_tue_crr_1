@@ -7,7 +7,7 @@ from typing import List
 from core.dependencies import get_db
 from middleware.auth import get_current_user
 from core import image_service
-from models.models import Product, ProductImage, User
+from models.models import Product, ProductImage, User, ProductStatus
 from schemas.schemas import ProductImageResponse
 from services import image_use_case
 
@@ -55,15 +55,60 @@ def upload_product_image(
 
 @router.get("/images/{filename}")
 def serve_image(filename: str):
-    """Serve an uploaded image by its UUID filename."""
+    """Serve an uploaded image by its UUID filename. Direct access is blocked."""
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Direct access to file paths is blocked."
+    )
+
+
+@router.get(
+    "/products/{product_id}/images/{filename}",
+    response_class=FileResponse,
+)
+def serve_product_image_authenticated(
+    product_id: UUID,
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Serve an uploaded image for a product. Only authenticated users with access permissions can view."""
     # ── Path-safety validation ────────────────────────────────────────────
     try:
         safe_path = image_service.build_safe_path(filename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if not safe_path.is_file():
+    # ── Check if the product exists ────────────────────────────────────────
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # ── Check if the image exists and belongs to the product ──────────────
+    db_image = (
+        db.query(ProductImage)
+        .filter(
+            ProductImage.product_id == product_id,
+            ProductImage.filename == filename,
+        )
+        .first()
+    )
+    if not db_image or not safe_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
+
+    # ── Verify permissions ────────────────────────────────────────────────
+    # Administrator can view anything
+    # Seller who owns the product can view
+    # Buyer (or any authenticated user) can view if the product is active
+    is_owner = product.seller_id == current_user.id
+    is_admin = current_user.is_admin
+    is_active_product = product.status == ProductStatus.active
+
+    if not (is_owner or is_admin or is_active_product):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to access this product image",
+        )
 
     # Determine media type from extension
     suffix = safe_path.suffix.lower()
