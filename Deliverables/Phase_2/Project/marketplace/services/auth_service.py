@@ -5,7 +5,7 @@ Security properties enforced here:
   - HIBP k-anonymity breach check on register & reset
   - No user enumeration (uniform InvalidCredentials for unknown email or wrong
     password) + constant-time verify even when user is missing
-  - Account lockout (5 attempts -> 15-minute lock)
+  - Account lockout (5 attempts -> 30-minute lock)
   - Reset tokens stored only as SHA-256 hashes, single-use, 30-min TTL
   - JWT jti claim enables blacklist-based revocation
   - Refresh tokens carry type=refresh so they cannot be used as access tokens
@@ -45,7 +45,7 @@ settings = get_settings()
 
 # Policy constants
 MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
+LOCKOUT_MINUTES = 30
 RESET_TOKEN_EXPIRE_MINUTES = 30
 
 # Real bcrypt hash that nothing matches — used to keep login timing constant

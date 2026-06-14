@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from core.dependencies import get_db
-from middleware.auth import get_current_user
+from middleware.auth import get_current_user, get_optional_user
 from models.models import Product, User, ProductStatus, Review, Order, OrderStatus
 from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate, ReviewCreate, ReviewResponse
 
@@ -37,22 +37,22 @@ def list_products(
 
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(
-    product_id: UUID, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)):
-    """Get a product by ID."""
-    query = db.query(Product).filter(Product.id == product_id)
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """Get a product by ID.
 
-    if current_user.is_seller:
-        query = query.filter(
-            (Product.seller_id == current_user.id) | (Product.status == ProductStatus.active)
-        )
-    elif current_user.is_buyer:
-        query = query.filter(Product.status == ProductStatus.active)
-
-    product = query.first()
+    Active products are public. Non-active products (draft/archived) are only
+    visible to their owning seller — everyone else gets 404 so the product's
+    existence is not disclosed (MST-09, SR-AUTHZ-06).
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+    if product.status != ProductStatus.active:
+        if current_user is None or product.seller_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Product not found")
     return product
 
 
