@@ -83,7 +83,7 @@ Project/marketplace/
 │   └── log_service.py       # Audit-log writer
 ├── repositories/            # Image repository queries
 ├── database/script.sql      # Hand-managed schema + least-privilege audit DB user
-├── nginx/                   # TLS reverse-proxy config + dev cert generation
+├── nginx/                   # TLS reverse-proxy config + dev cert generation + rate-limiting by IP
 ├── docker-compose.dev.yml   # HTTP dev stack
 ├── docker-compose.prod.yml  # Nginx-fronted TLS prod stack
 ├── tests/                   # ~149 unit/integration/abuse tests
@@ -142,7 +142,7 @@ Status legend: ✅ implemented · ◑ partial / deviates · ⚪ not implemented 
 | SR-AUTH-06 | Strong signing (HS256, 256-bit secret), secret never hardcoded | [core/security.py](Project/marketplace/core/security.py), [core/config.py](Project/marketplace/core/config.py) | ✅ |
 | SR-AUTH-07 | Account lockout after 5 failed attempts (30-minute lock) | [services/auth_service.py](Project/marketplace/services/auth_service.py) | ✅ |
 | SR-AUTH-08 | Invalidate sessions on password change / deactivation | `tokens_valid_from` cut-off + `TokenBlacklist` | ✅ |
-| SR-AUTH-09 | Login rate-limited per IP and per account | account lockout only | ◑ lockout ✅; **per-IP/min rate limiting not implemented** |
+| SR-AUTH-09 | Login rate-limited per IP and per account | account lockout and login rate-limited by IP (implemented on nginx) | lockout ✅; per-IP/min rate limiting by IP ✅ |
 | SR-AUTH-10 | All auth events logged (ts, user, IP, result) | [services/log_service.py](Project/marketplace/services/log_service.py) | ✅ |
 
 Additional hardening beyond the strict requirement list:
@@ -327,16 +327,15 @@ Recorded transparently so they can be prioritised in a future sprint.
 | # | Gap | Requirement | Impact / Notes |
 |---|---|---|---|
 | 1 | Access-token TTL defaults to 30 min | SR-AUTH-05 | Design specified ≤15 min; widen the damage window. One-line config change. |
-| 2 | No per-IP/per-account request rate limiting | SR-AUTH-09, NFR-04 | Account lockout mitigates credential brute-force, but there is no `429`/min throttle (no `limit_req` in Nginx, no slowapi). |
-| 3 | Stock decrement uses read-modify-write, no row lock | SR-DATA-10, T-P4-05 | Concurrent confirmations could oversell. Add `SELECT … FOR UPDATE` (Postgres). |
-| 4 | Image SHA-256 stored but not re-verified on download | SR-DATA-02 | Tamper detection on retrieval not yet enforced. |
-| 5 | User-supplied text not HTML-sanitized (no bleach) | SR-INPUT-06 | Lower risk: this is a JSON API with no server-rendered HTML, and invoices use ReportLab (no template engine), so SSTI/T-P6-01 is structurally removed; XSS stripping deferred to any future frontend. |
-| 6 | Pagination has no hard max page size | SR-INPUT-08 | `limit` is uncapped; add a 50-item ceiling. |
-| 7 | Dependencies use `>=` ranges, not exact pins | SR-3RD-01 | Reduces build reproducibility; pin with `==` + hashes. |
-| 8 | No Trivy container scan / Semgrep in CI | SR-3RD-04, test plan | SAST (Bandit) and SCA (pip-audit) are present; container-image scanning is not. |
-| 9 | One-review-per-product enforced only in code | SR-BIZ-02 | Add a DB `UNIQUE(product_id, buyer_id)` constraint to close the race. |
-| 10 | Order state machine permits `pending→delivered`; cancel allowed on `confirmed` | SR-BIZ-03/04 | More permissive than the Phase 1 spec; tighten the transition table. |
-| 11 | DB `sslmode=require` not pinned in sample compose | SR-COMM-03 | Configurable through `DATABASE_URL`; enforce it explicitly. |
+| 2 | Stock decrement uses read-modify-write, no row lock | SR-DATA-10, T-P4-05 | Concurrent confirmations could oversell. Add `SELECT … FOR UPDATE` (Postgres). |
+| 3 | Image SHA-256 stored but not re-verified on download | SR-DATA-02 | Tamper detection on retrieval not yet enforced. |
+| 4 | User-supplied text not HTML-sanitized (no bleach) | SR-INPUT-06 | Lower risk: this is a JSON API with no server-rendered HTML, and invoices use ReportLab (no template engine), so SSTI/T-P6-01 is structurally removed; XSS stripping deferred to any future frontend. |
+| 5 | Pagination has no hard max page size | SR-INPUT-08 | `limit` is uncapped; add a 50-item ceiling. |
+| 6 | Dependencies use `>=` ranges, not exact pins | SR-3RD-01 | Reduces build reproducibility; pin with `==` + hashes. |
+| 7 | No Trivy container scan / Semgrep in CI | SR-3RD-04, test plan | SAST (Bandit) and SCA (pip-audit) are present; container-image scanning is not. |
+| 8 | One-review-per-product enforced only in code | SR-BIZ-02 | Add a DB `UNIQUE(product_id, buyer_id)` constraint to close the race. |
+| 9 | Order state machine permits `pending→delivered`; cancel allowed on `confirmed` | SR-BIZ-03/04 | More permissive than the Phase 1 spec; tighten the transition table. |
+| 10 | DB `sslmode=require` not pinned in sample compose | SR-COMM-03 | Configurable through `DATABASE_URL`; enforce it explicitly. |
 
 ---
 
