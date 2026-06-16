@@ -136,6 +136,10 @@ def generate_invoice_pdf(order: Order, db: Session) -> str:
 
     c.showPage()
     c.save()
+    try:
+        os.chmod(path, 0o640)
+    except Exception:
+        pass
 
     # Persist filename on the order so future downloads can locate it
     try:
