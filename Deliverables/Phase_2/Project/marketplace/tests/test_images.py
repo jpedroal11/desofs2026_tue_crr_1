@@ -604,6 +604,28 @@ class TestImageExceptions:
         clear_auth(client)
 
 
+class TestFilePermissions:
+
+    def test_uploaded_image_permissions(self, client, seller_user, jpeg_bytes, tmp_upload_dir):
+        import stat
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("permissions_test.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 201
+
+        filename = res.json()["filename"]
+        file_path = tmp_upload_dir / filename
+        assert file_path.exists()
+
+        # Retrieve the absolute path
+        abs_path = str(file_path.resolve())
+
+        # Programmatically evaluate the file status bits
+        mode = stat.S_IMODE(os.stat(abs_path).st_mode)
+
+        # Assert that the octal mask matches exactly 0o640
+        assert mode == 0o640
+        clear_auth(client)
 class TestMST18Security:
 
     def test_upload_php_renamed_to_png(self, client, seller_user):
