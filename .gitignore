@@ -10,3 +10,5 @@
 *.key
 Deliverables/Phase_2/Project/marketplace/nginx/certs/*
 !Deliverables/Phase_2/Project/marketplace/nginx/certs/.gitkeep
+
+.DS_Store

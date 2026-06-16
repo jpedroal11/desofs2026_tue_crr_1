@@ -128,6 +128,18 @@ class ProductImageResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_validator("filename", "original_filename")
+    @classmethod
+    def exclude_filepaths(cls, v: str) -> str:
+        if not v:
+            return v
+        import os
+        # Extract only the base name of the file to remove any directory structure
+        base = os.path.basename(v)
+        # Explicitly remove path characters like slashes or backslashes
+        cleaned = base.replace("/", "").replace("\\", "")
+        return cleaned
+
 
 class ProductResponse(ProductBase):
     id: UUID

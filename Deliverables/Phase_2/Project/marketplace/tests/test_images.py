@@ -604,6 +604,89 @@ class TestImageExceptions:
         clear_auth(client)
 
 
+class TestPathExclusionInAPI:
+
+    def test_no_internal_pathways_leaked_in_responses(self, client, seller_user, jpeg_bytes):
+        # 1. Create a product
+        product_id = _create_product(client, seller_user)
+
+        # 2. Upload an image
+        authenticate_as(client, seller_user)
+        files = {"file": ("my_original_photo.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        upload_res = client.post(f"/products/{product_id}/images", files=files)
+        assert upload_res.status_code == 201
+        upload_data = upload_res.json()
+        
+        # Verify upload response JSON payload
+        self._verify_no_paths_in_dict(upload_data)
+
+        # 3. Transition product to active status so it is publicly retrievable
+        res_act = client.patch(f"/products/{product_id}/status", json={"status": "active"})
+        assert res_act.status_code == 200
+
+        # 4. Request product details
+        res_prod = client.get(f"/products/{product_id}")
+        assert res_prod.status_code == 200
+        prod_data = res_prod.json()
+        self._verify_no_paths_in_dict(prod_data)
+
+        # 4. Request image metadata list
+        res_meta = client.get(f"/products/{product_id}/images")
+        assert res_meta.status_code == 200
+        meta_data = res_meta.json()
+        assert isinstance(meta_data, list)
+        for img_entry in meta_data:
+            self._verify_no_paths_in_dict(img_entry)
+
+        # 5. Verify that even if the database has path characters, the Pydantic schema excludes them!
+        from models.models import ProductImage
+        from schemas.schemas import ProductImageResponse
+        import datetime
+        mock_db_img = ProductImage(
+            id=uuid.uuid4(),
+            product_id=uuid.uuid4(),
+            filename="/var/www/uploads/random_uuid.jpg",
+            original_filename="nested/dir/my_photo.jpg",
+            mime_type="image/jpeg",
+            file_size=1024,
+            sha256_hash="dummy_hash",
+            uploaded_at=datetime.datetime.now(datetime.UTC)
+        )
+        response_schema = ProductImageResponse.model_validate(mock_db_img)
+        serialized_data = response_schema.model_dump()
+        
+        # Verify that the schema stripped the pathways!
+        assert "/" not in serialized_data["filename"]
+        assert "\\" not in serialized_data["filename"]
+        assert "/" not in serialized_data["original_filename"]
+        assert "\\" not in serialized_data["original_filename"]
+        assert "var" not in serialized_data["filename"]
+        assert "uploads" not in serialized_data["filename"]
+        assert "dir" not in serialized_data["original_filename"]
+        
+        clear_auth(client)
+
+    def _verify_no_paths_in_dict(self, data):
+        """Recursively check that absolutely no path characters indicating internal directory
+        topology are leaked in any string fields, except for the standard media types (mime_type).
+        """
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if k == "mime_type":
+                    # Mime type like image/jpeg is allowed to have a slash
+                    continue
+                if isinstance(v, str):
+                    # Assert no slashes, backslashes, or system directory paths
+                    assert "/" not in v, f"Field '{k}' leaked path separator '/': {v}"
+                    assert "\\" not in v, f"Field '{k}' leaked path separator '\\': {v}"
+                    # Check common system directories
+                    for forbidden in ["/var", "/tmp", "uploads", "/www"]:
+                        assert forbidden not in v, f"Field '{k}' leaked system directory '{forbidden}': {v}"
+                elif isinstance(v, (dict, list)):
+                    self._verify_no_paths_in_dict(v)
+        elif isinstance(data, list):
+            for item in data:
+                self._verify_no_paths_in_dict(item)
 class TestFilePermissions:
 
     def test_uploaded_image_permissions(self, client, seller_user, jpeg_bytes, tmp_upload_dir):
