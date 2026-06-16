@@ -71,7 +71,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -79,7 +79,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -109,7 +109,7 @@ jobs:
 
       - name: Authenticate to Google Cloud via WIF
         id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
@@ -140,21 +140,52 @@ jobs:
           GCP_ARTIFACT_REGISTRY_LOCATION: ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}
           APP_SECRET_KEY: ${{ secrets.APP_SECRET_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
         run: |
           gcloud compute ssh instance-20260610-173428 \
             --zone=europe-west1-b \
             --project=${{ secrets.GCP_PROJECT_ID }} \
             --command="
+              # --- shared network & volume (idempotent) ---
+              docker network create marketplace-net 2>/dev/null || true
+              docker volume create postgres-data 2>/dev/null || true
+
+              # --- PostgreSQL ---
+              if ! docker ps --format '{{.Names}}' | grep -q '^postgres$'; then
+                docker rm -f postgres 2>/dev/null || true
+                docker run -d \
+                  --name postgres \
+                  --network marketplace-net \
+                  --restart always \
+                  -v postgres-data:/var/lib/postgresql/data \
+                  -e POSTGRES_USER='$POSTGRES_USER' \
+                  -e POSTGRES_PASSWORD='$POSTGRES_PASSWORD' \
+                  -e POSTGRES_DB='$POSTGRES_DB' \
+                  postgres:16-alpine
+              fi
+
+              # wait until postgres is accepting connections
+              echo 'Waiting for PostgreSQL to be ready...'
+              for i in \$(seq 1 30); do
+                docker exec postgres pg_isready -U '$POSTGRES_USER' && break
+                echo \"  attempt \$i/30 - not ready yet\"
+                sleep 2
+              done
+
+              # --- Application ---
               gcloud auth configure-docker $GCP_ARTIFACT_REGISTRY_LOCATION-docker.pkg.dev --quiet
-              docker pull ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
-              docker stop marketplace || true
-              docker rm marketplace || true
+              docker pull $GCP_ARTIFACT_REGISTRY_LOCATION-docker.pkg.dev/$GCP_PROJECT_ID/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+              docker stop marketplace 2>/dev/null || true
+              docker rm   marketplace 2>/dev/null || true
               docker run -d \
                 --name marketplace \
+                --network marketplace-net \
                 --restart always \
                 -p 8000:8000 \
                 -e SECRET_KEY='$APP_SECRET_KEY' \
                 -e DATABASE_URL='$DATABASE_URL' \
                 -e APP_ENV='production' \
-                ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+                $GCP_ARTIFACT_REGISTRY_LOCATION-docker.pkg.dev/$GCP_PROJECT_ID/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
             "
