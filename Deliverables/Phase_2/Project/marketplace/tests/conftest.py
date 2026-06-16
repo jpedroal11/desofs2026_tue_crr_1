@@ -104,6 +104,20 @@ def buyer_user(db_session):
     return user
 
 
+@pytest.fixture
+def admin_user(db_session):
+    user = User(
+        email="admin@example.com",
+        username="admin",
+        hashed_password="hashed_password",
+    )
+    user.roles = [_ensure_role(db_session, "Administrator")]
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
 # ── Image upload isolation (existing test_images.py depends on this) ──────────
 
 @pytest.fixture(autouse=True)

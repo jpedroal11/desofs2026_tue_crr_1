@@ -56,6 +56,7 @@ TEST_USER = {
 PROTECTED_ENDPOINTS: list[tuple[str, str]] = [
     ("GET", "/auth/me"),
     ("POST", "/auth/logout"),
+    ("GET", "/users/"),
     ("POST", "/products/"),
     ("GET", "/orders/"),
     ("POST", "/orders/"),

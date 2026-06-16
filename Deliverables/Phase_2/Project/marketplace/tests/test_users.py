@@ -5,26 +5,59 @@ from models.models import User
 import uuid
 
 def authenticate_as(client, user):
+    user._jwt_roles = [r.name for r in user.roles]
     app.dependency_overrides[get_current_user] = lambda: user
 
 def clear_auth(client):
     if get_current_user in app.dependency_overrides:
         del app.dependency_overrides[get_current_user]
 
-def test_list_users(client, buyer_user):
+def test_list_users(client, admin_user):
+    authenticate_as(client, admin_user)
     res = client.get("/users/")
     assert res.status_code == 200
-    assert len(res.json()) >= 1 # Because fixtures create users
+    assert len(res.json()) >= 1
+    clear_auth(client)
 
-def test_get_user(client, buyer_user):
+def test_list_users_unauthenticated(client):
+    res = client.get("/users/")
+    assert res.status_code == 401
+
+def test_list_users_non_admin_forbidden(client, buyer_user):
+    authenticate_as(client, buyer_user)
+    res = client.get("/users/")
+    assert res.status_code == 403
+    clear_auth(client)
+
+def test_get_user_self(client, buyer_user):
     user_id = buyer_user.id
+    authenticate_as(client, buyer_user)
     res = client.get(f"/users/{user_id}")
     assert res.status_code == 200
     assert res.json()["id"] == str(user_id)
+    clear_auth(client)
 
-    # Not found
+def test_get_user_unauthenticated(client, buyer_user):
+    user_id = buyer_user.id
+    res = client.get(f"/users/{user_id}")
+    assert res.status_code == 401
+
+def test_get_user_other_user_forbidden(client, buyer_user, seller_user):
+    authenticate_as(client, buyer_user)
+    res = client.get(f"/users/{seller_user.id}")
+    assert res.status_code == 403
+    clear_auth(client)
+
+def test_get_user_admin_allowed(client, admin_user, buyer_user):
+    authenticate_as(client, admin_user)
+    res = client.get(f"/users/{buyer_user.id}")
+    assert res.status_code == 200
+    assert res.json()["id"] == str(buyer_user.id)
+
+    # Admin querying non-existent user ID returns 404
     res_404 = client.get(f"/users/{uuid.uuid4()}")
     assert res_404.status_code == 404
+    clear_auth(client)
 
 def test_update_user(client, buyer_user, seller_user):
     user_id = buyer_user.id

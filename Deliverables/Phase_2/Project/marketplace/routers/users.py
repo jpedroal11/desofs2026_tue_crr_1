@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from core.dependencies import get_db
-from middleware.auth import get_current_user
+from middleware.auth import get_current_user, require_admin
 from models.models import User
 from schemas.schemas import UserResponse, UserUpdate
 
@@ -12,14 +12,29 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 @router.get("/", response_model=List[UserResponse])
-def list_users(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
-    """List all active users (public endpoint)."""
+def list_users(
+    skip: int = 0,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """List all active users (Administrator only)."""
     return db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-def get_user(user_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get a user by ID."""
+    if current_user.id != user_id and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
