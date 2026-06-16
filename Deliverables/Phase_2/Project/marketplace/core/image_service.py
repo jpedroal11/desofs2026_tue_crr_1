@@ -34,8 +34,8 @@ MIME_TO_EXTENSION: dict[str, str] = {
     "image/webp": ".webp",
 }
 
-MAX_FILE_SIZE: int = 20 * 1024 * 1024  # 20 MB
-MAX_IMAGES_PER_PRODUCT: int = 5
+MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10 MB
+MAX_IMAGES_PER_PRODUCT: int = 10
 UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "uploads")
 
 # ── Magic-byte signatures ─────────────────────────────────────────────────────
@@ -110,6 +110,42 @@ def validate_content_type_matches(
         )
 
 
+def validate_png_structure_and_payload(
+    content: bytes, filename: str | None, content_type: str | None
+) -> None:
+    """Validate PNG signature and scan for malicious executable/PHP payloads.
+
+    Runs if the file claims to be a PNG (by content-type or extension).
+    """
+    is_png_claim = False
+    if content_type == "image/png":
+        is_png_claim = True
+    if filename and filename.lower().endswith(".png"):
+        is_png_claim = True
+
+    if is_png_claim:
+        # 1. Magic bytes validation (PNG signature check)
+        if len(content) < 8 or not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError(
+                "File magic bytes do not match PNG format signature"
+            )
+
+        # 2. Check for PHP/executable payloads anywhere in the file
+        signatures = [
+            b"<?php",
+            b"<?=",
+            b"<script",
+            b"#!/bin/",
+            b"#!/usr/bin/env",
+        ]
+        content_lower = content.lower()
+        for sig in signatures:
+            if sig in content_lower:
+                raise ValueError(
+                    f"Malicious executable payload detected in PNG content: '{sig.decode()}'"
+                )
+
+
 def generate_uuid_filename(detected_mime: str) -> str:
     """Return a ``{uuid4}{ext}`` filename for the given MIME type."""
     ext = MIME_TO_EXTENSION.get(detected_mime)
@@ -168,6 +204,7 @@ def save_file(content: bytes, path: Path) -> None:
         tmp_path.write_bytes(content)
         os.chmod(tmp_path, 0o640)
         tmp_path.rename(path)
+        os.chmod(path, 0o640)
     except Exception:
         # Clean up temp file on failure
         tmp_path.unlink(missing_ok=True)

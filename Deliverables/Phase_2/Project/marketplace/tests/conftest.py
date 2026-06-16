@@ -334,7 +334,10 @@ def active_product(db_session, seller_user):
 @pytest.fixture
 def delivered_order(db_session, buyer_user, seller_user, active_product):
     """Create and return a delivered order."""
+    import uuid
     from models.models import Order, OrderItem, OrderStatus
+    
+    product_id = uuid.UUID(active_product["id"])
     order = Order(
         buyer_id=buyer_user.id,
         seller_id=seller_user.id,
@@ -347,7 +350,7 @@ def delivered_order(db_session, buyer_user, seller_user, active_product):
 
     item = OrderItem(
         order_id=order.id,
-        product_id=active_product["id"],
+        product_id=product_id,
         quantity=1,
         unit_price=29.99,
     )
@@ -356,7 +359,7 @@ def delivered_order(db_session, buyer_user, seller_user, active_product):
     db_session.refresh(order)
     return {
         "id": str(order.id),
-        "product_id": str(active_product["id"]),
+        "product_id": str(product_id),
         "total_amount": float(order.total_amount),
     }
 

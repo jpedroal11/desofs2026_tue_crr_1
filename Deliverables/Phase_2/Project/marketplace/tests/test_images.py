@@ -75,7 +75,7 @@ class TestUploadValidationFailures:
         fake_content = b"MZ" + b"\x00" * 100  # PE/EXE header
         files = {"file": ("malware.jpg", io.BytesIO(fake_content), "image/jpeg")}
         res = client.post(f"/products/{product_id}/images", files=files)
-        assert res.status_code == 400
+        assert res.status_code == 422
         assert "magic-byte" in res.json()["detail"].lower() or "does not match" in res.json()["detail"].lower()
         clear_auth(client)
 
@@ -84,7 +84,7 @@ class TestUploadValidationFailures:
         product_id = _create_product(client, seller_user)
         files = {"file": ("photo.png", io.BytesIO(jpeg_bytes), "image/png")}
         res = client.post(f"/products/{product_id}/images", files=files)
-        assert res.status_code == 400
+        assert res.status_code == 422
         assert "does not match" in res.json()["detail"].lower()
         clear_auth(client)
 
@@ -130,7 +130,7 @@ class TestUploadValidationFailures:
         files = {"file": ("img_extra.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
         res = client.post(f"/products/{product_id}/images", files=files)
         assert res.status_code == 400
-        assert "Maximum number of images per product reached (10)" in res.json()["detail"]
+        assert "maximum images per product exceeded" in res.json()["detail"].lower()
         clear_auth(client)
 
     def test_upload_rejects_when_quota_exceeded(self, client, seller_user, jpeg_bytes, monkeypatch):
@@ -378,7 +378,8 @@ class TestPathTraversal:
         assert upload_res.status_code == 201
 
         filename = upload_res.json()["filename"]
-        serve_res = client.get(f"/images/{filename}")
+        authenticate_as(client, seller_user)
+        serve_res = client.get(f"/products/{product_id}/images/{filename}")
         assert serve_res.status_code == 200
         assert serve_res.headers["content-type"] == "image/jpeg"
         clear_auth(client)
@@ -555,13 +556,16 @@ class TestImageExceptions:
         assert "Mock OS error" in res.json()["detail"]
         clear_auth(client)
 
-    def test_serve_image_value_error(self, client, monkeypatch):
+    def test_serve_image_value_error(self, client, seller_user, monkeypatch):
+        authenticate_as(client, seller_user)
         def mock_build(*args, **kwargs):
             raise ValueError("Mock bad path")
         monkeypatch.setattr(image_service, "build_safe_path", mock_build)
         
-        res = client.get("/images/test.jpg")
+        product_uuid = uuid.uuid4()
+        res = client.get(f"/products/{product_uuid}/images/test.jpg")
         assert res.status_code == 400
+        clear_auth(client)
 
     def test_list_product_images_404(self, client):
         res = client.get("/products/00000000-0000-0000-0000-000000000000/images")
@@ -598,3 +602,276 @@ class TestImageExceptions:
         del_res = client.delete(f"/products/{product_id}/images/{image_id}")
         assert del_res.status_code == 204
         clear_auth(client)
+
+
+class TestPathExclusionInAPI:
+
+    def test_no_internal_pathways_leaked_in_responses(self, client, seller_user, jpeg_bytes):
+        # 1. Create a product
+        product_id = _create_product(client, seller_user)
+
+        # 2. Upload an image
+        authenticate_as(client, seller_user)
+        files = {"file": ("my_original_photo.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        upload_res = client.post(f"/products/{product_id}/images", files=files)
+        assert upload_res.status_code == 201
+        upload_data = upload_res.json()
+        
+        # Verify upload response JSON payload
+        self._verify_no_paths_in_dict(upload_data)
+
+        # 3. Transition product to active status so it is publicly retrievable
+        res_act = client.patch(f"/products/{product_id}/status", json={"status": "active"})
+        assert res_act.status_code == 200
+
+        # 4. Request product details
+        res_prod = client.get(f"/products/{product_id}")
+        assert res_prod.status_code == 200
+        prod_data = res_prod.json()
+        self._verify_no_paths_in_dict(prod_data)
+
+        # 4. Request image metadata list
+        res_meta = client.get(f"/products/{product_id}/images")
+        assert res_meta.status_code == 200
+        meta_data = res_meta.json()
+        assert isinstance(meta_data, list)
+        for img_entry in meta_data:
+            self._verify_no_paths_in_dict(img_entry)
+
+        # 5. Verify that even if the database has path characters, the Pydantic schema excludes them!
+        from models.models import ProductImage
+        from schemas.schemas import ProductImageResponse
+        import datetime
+        mock_db_img = ProductImage(
+            id=uuid.uuid4(),
+            product_id=uuid.uuid4(),
+            filename="/var/www/uploads/random_uuid.jpg",
+            original_filename="nested/dir/my_photo.jpg",
+            mime_type="image/jpeg",
+            file_size=1024,
+            sha256_hash="dummy_hash",
+            uploaded_at=datetime.datetime.now(datetime.UTC)
+        )
+        response_schema = ProductImageResponse.model_validate(mock_db_img)
+        serialized_data = response_schema.model_dump()
+        
+        # Verify that the schema stripped the pathways!
+        assert "/" not in serialized_data["filename"]
+        assert "\\" not in serialized_data["filename"]
+        assert "/" not in serialized_data["original_filename"]
+        assert "\\" not in serialized_data["original_filename"]
+        assert "var" not in serialized_data["filename"]
+        assert "uploads" not in serialized_data["filename"]
+        assert "dir" not in serialized_data["original_filename"]
+        
+        clear_auth(client)
+
+    def _verify_no_paths_in_dict(self, data):
+        """Recursively check that absolutely no path characters indicating internal directory
+        topology are leaked in any string fields, except for the standard media types (mime_type).
+        """
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if k == "mime_type":
+                    # Mime type like image/jpeg is allowed to have a slash
+                    continue
+                if isinstance(v, str):
+                    # Assert no slashes, backslashes, or system directory paths
+                    assert "/" not in v, f"Field '{k}' leaked path separator '/': {v}"
+                    assert "\\" not in v, f"Field '{k}' leaked path separator '\\': {v}"
+                    # Check common system directories
+                    for forbidden in ["/var", "/tmp", "uploads", "/www"]:
+                        assert forbidden not in v, f"Field '{k}' leaked system directory '{forbidden}': {v}"
+                elif isinstance(v, (dict, list)):
+                    self._verify_no_paths_in_dict(v)
+        elif isinstance(data, list):
+            for item in data:
+                self._verify_no_paths_in_dict(item)
+class TestFilePermissions:
+
+    def test_uploaded_image_permissions(self, client, seller_user, jpeg_bytes, tmp_upload_dir):
+        import stat
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("permissions_test.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 201
+
+        filename = res.json()["filename"]
+        file_path = tmp_upload_dir / filename
+        assert file_path.exists()
+
+        # Retrieve the absolute path
+        abs_path = str(file_path.resolve())
+
+        # Programmatically evaluate the file status bits
+        mode = stat.S_IMODE(os.stat(abs_path).st_mode)
+
+        # Assert that the octal mask matches exactly 0o640
+        assert mode == 0o640
+        clear_auth(client)
+class TestMST18Security:
+
+    def test_upload_php_renamed_to_png(self, client, seller_user):
+        product_id = _create_product(client, seller_user)
+        php_content = b"<?php phpinfo(); ?>"
+        files = {"file": ("malicious.png", io.BytesIO(php_content), "image/png")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 422
+        clear_auth(client)
+
+    def test_upload_png_with_embedded_php(self, client, seller_user, png_bytes):
+        product_id = _create_product(client, seller_user)
+        bad_content = png_bytes + b"<?php phpinfo(); ?>"
+        files = {"file": ("malicious.png", io.BytesIO(bad_content), "image/png")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 422
+        clear_auth(client)
+
+    def test_upload_completely_valid_png(self, client, seller_user, png_bytes):
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("valid.png", io.BytesIO(png_bytes), "image/png")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 201
+        clear_auth(client)
+
+
+class TestMST19Security:
+
+    def test_upload_exactly_10_images_and_fail_11th(self, client, seller_user, png_bytes):
+        product_id = _create_product(client, seller_user)
+        authenticate_as(client, seller_user)
+        
+        # Upload 10 images successfully
+        for i in range(10):
+            files = {"file": (f"img_{i}.png", io.BytesIO(png_bytes), "image/png")}
+            res = client.post(f"/products/{product_id}/images", files=files)
+            assert res.status_code == 201, f"Failed at upload {i+1}"
+            
+        # Attempt 11th upload
+        files = {"file": ("img_11.png", io.BytesIO(png_bytes), "image/png")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 400
+        assert "maximum images per product exceeded" in res.json()["detail"].lower()
+        clear_auth(client)
+
+
+class TestMST20Security:
+
+    def test_raw_access_blocked_returns_404(self, client, seller_user, buyer_user, png_bytes):
+        # 1. Successful upload
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("test.png", io.BytesIO(png_bytes), "image/png")}
+        res = client.post(f"/products/{product_id}/images", files=files)
+        assert res.status_code == 201
+        filename = res.json()["filename"]
+        
+        # Clear auth
+        clear_auth(client)
+        
+        # 2. Attempt raw direct access - must return 404
+        raw_res = client.get(f"/images/{filename}")
+        assert raw_res.status_code == 404
+        
+        # 3. Attempt authenticated endpoint without auth - must fail with 401
+        auth_res_no_login = client.get(f"/products/{product_id}/images/{filename}")
+        assert auth_res_no_login.status_code == 401
+        
+        # 4. Attempt with seller (owner) - must succeed (200)
+        authenticate_as(client, seller_user)
+        auth_res_seller = client.get(f"/products/{product_id}/images/{filename}")
+        assert auth_res_seller.status_code == 200
+        assert auth_res_seller.headers["content-type"] == "image/png"
+        clear_auth(client)
+
+        # 5. Attempt with buyer when product is active - must fail with 403 because product is draft
+        authenticate_as(client, buyer_user)
+        auth_res_buyer_draft = client.get(f"/products/{product_id}/images/{filename}")
+        assert auth_res_buyer_draft.status_code == 403
+        clear_auth(client)
+
+
+class TestImageUploadLimitsAsync:
+
+    @pytest.mark.asyncio
+    async def test_upload_exceeds_10mb_async(self, seller_user):
+        """Test that a file payload exceeding 10MB (11MB) is immediately rejected with HTTP 422."""
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+        from middleware.auth import get_current_user
+
+        app.dependency_overrides[get_current_user] = lambda: seller_user
+
+        big_content = b"a" * (11 * 1024 * 1024)
+        files = {"file": ("big_image.png", big_content, "image/png")}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            product_res = await client.post(
+                "/products/",
+                json={"name": "Async Size Limit Prod", "price": 19.99, "stock": 10}
+            )
+            assert product_res.status_code == 201
+            product_id = product_res.json()["id"]
+
+            upload_res = await client.post(f"/products/{product_id}/images", files=files)
+            assert upload_res.status_code == 422
+            assert "exceeds maximum allowed size of 10 MB" in upload_res.json()["detail"]
+
+        app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_upload_valid_5mb_async(self, seller_user, png_bytes):
+        """Test that a valid 5MB PNG file succeeds with HTTP 201/200."""
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+        from middleware.auth import get_current_user
+
+        app.dependency_overrides[get_current_user] = lambda: seller_user
+
+        five_mb_content = png_bytes + b"\x00" * (5 * 1024 * 1024 - len(png_bytes))
+        files = {"file": ("valid_5mb.png", five_mb_content, "image/png")}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            product_res = await client.post(
+                "/products/",
+                json={"name": "Async 5MB Prod", "price": 9.99, "stock": 5}
+            )
+            assert product_res.status_code == 201
+            product_id = product_res.json()["id"]
+
+            upload_res = await client.post(f"/products/{product_id}/images", files=files)
+            assert upload_res.status_code in (200, 201)
+            data = upload_res.json()
+            assert data["mime_type"] == "image/png"
+            assert data["original_filename"] == "valid_5mb.png"
+
+        app.dependency_overrides.clear()
+
+
+class TestImageIntegritySecurity:
+
+    def test_image_integrity_failure_blocks_download(self, client, seller_user, jpeg_bytes, tmp_upload_dir):
+        # 1. Write an integration test that uploads a valid image and saves its metadata
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("integrity_test.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        authenticate_as(client, seller_user)
+        upload_res = client.post(f"/products/{product_id}/images", files=files)
+        assert upload_res.status_code == 201
+        data = upload_res.json()
+        filename = data["filename"]
+
+        # 2. Verify file exists on disk
+        file_path = tmp_upload_dir / filename
+        assert file_path.exists()
+
+        # 3. Manually modify the file content on disk (tampering)
+        file_path.write_bytes(b"tampered image data")
+
+        # 4. Attempt to download the image through the authenticated API endpoint
+        serve_res = client.get(f"/products/{product_id}/images/{filename}")
+
+        # 5. Assert that the system blocks the download and returns the expected data integrity error (500)
+        assert serve_res.status_code == 500
+        assert "integrity" in serve_res.json()["detail"].lower()
+        clear_auth(client)
+
+

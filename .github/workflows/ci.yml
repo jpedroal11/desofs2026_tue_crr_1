@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,10 +26,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -50,7 +51,7 @@ jobs:
             -v
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: Deliverables/Phase_2/Project/marketplace/coverage.xml
@@ -59,7 +60,7 @@ jobs:
   deploy:
     name: Build & Push Docker Image
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,10 +68,10 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -78,7 +79,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -86,9 +87,105 @@ jobs:
             type=sha
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: Deliverables/Phase_2/Project/marketplace
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-gcp:
+    name: Deploy to GCP Compute Engine
+    needs: test
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud via WIF
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest \
+                       -t ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:${{ github.sha }} \
+                       Deliverables/Phase_2/Project/marketplace
+
+      - name: Push image to Artifact Registry
+        run: |
+          docker push ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+          docker push ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:${{ github.sha }}
+
+      - name: Deploy to VM via SSH
+        env:
+          IMAGE_URL: ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_ARTIFACT_REGISTRY_LOCATION: ${{ secrets.GCP_ARTIFACT_REGISTRY_LOCATION }}
+          APP_SECRET_KEY: ${{ secrets.APP_SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        run: |
+          gcloud compute ssh instance-20260610-173428 \
+            --zone=europe-west1-b \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --command="
+              # --- shared network & volume (idempotent) ---
+              docker network create marketplace-net 2>/dev/null || true
+              docker volume create postgres-data 2>/dev/null || true
+
+              # --- PostgreSQL ---
+              if ! docker ps --format '{{.Names}}' | grep -q '^postgres$'; then
+                docker rm -f postgres 2>/dev/null || true
+                docker run -d \
+                  --name postgres \
+                  --network marketplace-net \
+                  --restart always \
+                  -v postgres-data:/var/lib/postgresql/data \
+                  -e POSTGRES_USER='$POSTGRES_USER' \
+                  -e POSTGRES_PASSWORD='$POSTGRES_PASSWORD' \
+                  -e POSTGRES_DB='$POSTGRES_DB' \
+                  postgres:16-alpine
+              fi
+
+              # wait until postgres is accepting connections
+              echo 'Waiting for PostgreSQL to be ready...'
+              for i in \$(seq 1 30); do
+                docker exec postgres pg_isready -U '$POSTGRES_USER' && break
+                echo \"  attempt \$i/30 - not ready yet\"
+                sleep 2
+              done
+
+              # --- Application ---
+              gcloud auth configure-docker $GCP_ARTIFACT_REGISTRY_LOCATION-docker.pkg.dev --quiet
+              docker pull $GCP_ARTIFACT_REGISTRY_LOCATION-docker.pkg.dev/$GCP_PROJECT_ID/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+              docker stop marketplace 2>/dev/null || true
+              docker rm   marketplace 2>/dev/null || true
+              docker run -d \
+                --name marketplace \
+                --network marketplace-net \
+                --restart always \
+                -p 8000:8000 \
+                -e SECRET_KEY='$APP_SECRET_KEY' \
+                -e DATABASE_URL='$DATABASE_URL' \
+                -e APP_ENV='production' \
+                $GCP_ARTIFACT_REGISTRY_LOCATION-docker.pkg.dev/$GCP_PROJECT_ID/${{ secrets.GCP_ARTIFACT_REGISTRY_REPO }}/marketplace:latest
+            "

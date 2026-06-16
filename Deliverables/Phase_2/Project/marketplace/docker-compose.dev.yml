@@ -1,0 +1,42 @@
+# Development stack: app + db only — NO TLS proxy.
+#
+# The app is published directly on :8000 over plain HTTP with
+# APP_ENV=development, so Swagger UI is reachable with no nginx CSP in the way.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#   ->  http://localhost:8000/docs
+#
+# For the hardened production surface (TLS, HSTS, CSP) use docker-compose.prod.yml.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-marketplace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-marketplace_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marketplace} -d ${POSTGRES_DB:-marketplace_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-not-for-production-change-me-32b}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://marketplace:devpassword@db:5432/marketplace_db}
+      # Dev stack is always development — enables /docs.
+      APP_ENV: development
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata_dev:

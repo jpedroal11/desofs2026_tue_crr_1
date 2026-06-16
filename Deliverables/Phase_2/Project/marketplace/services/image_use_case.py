@@ -26,17 +26,22 @@ def upload_product_image(
     try:
         image_service.validate_file_size(file_content)
         image_service.validate_mime_type(content_type)
-        detected_mime = image_service.validate_magic_bytes(file_content)
-        image_service.validate_content_type_matches(content_type, detected_mime)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    try:
+        detected_mime = image_service.validate_magic_bytes(file_content)
+        image_service.validate_content_type_matches(content_type, detected_mime)
+        image_service.validate_png_structure_and_payload(file_content, filename, content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     # ── Image count limit ──────────────────────────────────────────────────
     current_count = image_repository.count_by_product(db, product_id)
-    if current_count >= 10:
+    if current_count >= image_service.MAX_IMAGES_PER_PRODUCT:
         raise HTTPException(
             status_code=400,
-            detail="Maximum number of images per product reached (10)",
+            detail="maximum images per product exceeded",
         )
 
     # ── Storage quota limit ────────────────────────────────────────────────

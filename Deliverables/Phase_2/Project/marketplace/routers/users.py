@@ -8,6 +8,8 @@ from middleware.auth import get_current_user, require_admin
 from models.models import User
 from schemas.schemas import UserResponse, UserUpdate
 
+from services.log_service import write_audit_log
+
 router = APIRouter(prefix="/users", tags=["Users"])
 
 

@@ -4,9 +4,11 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from core.dependencies import get_db
-from middleware.auth import get_current_user
-from models.models import Product, User, ProductStatus
-from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate
+from middleware.auth import get_current_user, get_optional_user
+from models.models import Product, User, ProductStatus, Review, Order, OrderStatus
+from schemas.schemas import ProductCreate, ProductUpdate, ProductResponse, StockAdjustment, ProductStatusUpdate, ReviewCreate, ReviewResponse
+
+from services.log_service import write_audit_log
 
 import logging
 
@@ -36,11 +38,32 @@ def list_products(
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
-def get_product(product_id: UUID, db: Session = Depends(get_db)):
-    """Get a product by ID."""
+def get_product(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """Get a product by ID.
+
+    Active products are public. Non-active products (draft/archived) are only
+    visible to their owning seller — everyone else gets 404 so the product's
+    existence is not disclosed (MST-09, SR-AUTHZ-06).
+    """
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="GET_PRODUCT",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
+    if product.status != ProductStatus.active:
+        if current_user is None or product.seller_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Product not found")
     return product
 
 
@@ -53,12 +76,31 @@ def create_product(
 
     """Create a new product. Only sellers can create products."""
     if not current_user.is_seller:
+        write_audit_log(
+            action="CREATE_PRODUCT",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=None,
+            message=f"Only sellers can create products",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Only sellers can create products")
 
     product = Product(**product_in.model_dump(), seller_id=current_user.id)
     db.add(product)
     db.commit()
     db.refresh(product)
+
+    write_audit_log(
+        action="CREATE_PRODUCT",
+        resource="PRODUCT",
+        result="success",
+        user_id=current_user.id,
+        resource_id=product.id,
+        message=f"Product created successfully",
+        db=db
+    )
     return product
 
 
@@ -72,8 +114,26 @@ def update_product(
     """Update a product. Only the seller who owns it can update it."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="UPDATE_PRODUCT",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
     if product.seller_id != current_user.id:
+        write_audit_log(
+            action="UPDATE_PRODUCT",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Not allowed to update this product",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to update this product")
 
     for field, value in product_in.model_dump(exclude_unset=True).items():
@@ -81,6 +141,16 @@ def update_product(
 
     db.commit()
     db.refresh(product)
+
+    write_audit_log(
+        action="UPDATE_PRODUCT",
+        resource="PRODUCT",
+        result="success",
+        user_id=current_user.id,
+        resource_id=product_id,
+        message=f"Product updated successfully",
+        db=db
+    )
     return product
 
 
@@ -93,11 +163,39 @@ def delete_product(
     """Soft-delete a product (sets is_active=False)."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="DELETE_PRODUCT",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
     if product.seller_id != current_user.id:
+        write_audit_log(
+            action="DELETE_PRODUCT",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Not allowed to delete this product",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to delete this product")
 
     product.status = ProductStatus.archived
+
+    write_audit_log(
+        action="DELETE_PRODUCT",
+        resource="PRODUCT",
+        result="success",
+        user_id=current_user.id,
+        resource_id=product_id,
+        message=f"Product deleted successfully",
+        db=db
+    )
     db.commit()
 
 
@@ -111,13 +209,41 @@ def update_product_status(
     """Update product status (e.g., draft -> active)."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="UPDATE_PRODUCT_STATUS",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
     if product.seller_id != current_user.id:
+        write_audit_log(
+            action="UPDATE_PRODUCT_STATUS",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Not allowed to update this product",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to update this product")
 
     product.status = status_update.status
     db.commit()
     db.refresh(product)
+
+    write_audit_log(
+        action="UPDATE_PRODUCT_STATUS",
+        resource="PRODUCT",
+        result="success",
+        user_id=current_user.id,
+        resource_id=product_id,
+        message=f"Product status updated successfully",
+        db=db
+    )
     return product
 
 
@@ -131,13 +257,41 @@ def add_product_stock(
     """Add stock to a product."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="ADD_PRODUCT_STOCK",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
     if product.seller_id != current_user.id:
+        write_audit_log(
+            action="ADD_PRODUCT_STOCK",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Not allowed to update this product",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to update this product")
 
     product.stock += adjustment.quantity
     db.commit()
     db.refresh(product)
+
+    write_audit_log(
+        action="ADD_PRODUCT_STOCK",
+        resource="PRODUCT",
+        result="success",
+        user_id=current_user.id,
+        resource_id=product_id,
+        message=f"Product stock updated successfully",
+        db=db
+    )
     return product
 
 
@@ -151,14 +305,141 @@ def reduce_product_stock(
     """Reduce stock from a product (cannot go below 0)."""
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
+        write_audit_log(
+            action="REDUCE_PRODUCT_STOCK",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Product not found",
+            db=db
+        )
         raise HTTPException(status_code=404, detail="Product not found")
     if product.seller_id != current_user.id:
+        write_audit_log(
+            action="REDUCE_PRODUCT_STOCK",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Not allowed to update this product",
+            db=db
+        )
         raise HTTPException(status_code=403, detail="Not allowed to update this product")
 
     if product.stock < adjustment.quantity:
+        write_audit_log(
+            action="REDUCE_PRODUCT_STOCK",
+            resource="PRODUCT",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Insufficient stock",
+            db=db
+        )
         raise HTTPException(status_code=400, detail="Insufficient stock")
 
     product.stock -= adjustment.quantity
     db.commit()
     db.refresh(product)
+    write_audit_log(
+        action="REDUCE_PRODUCT_STOCK",
+        resource="PRODUCT",
+        result="success",
+        user_id=current_user.id,
+        resource_id=product_id,
+        message=f"Product stock reduced successfully",
+        db=db
+    )
     return product
+
+
+# ── Review Endpoints ──────────────────────────────────────────────────────────
+
+@router.post("/{product_id}/reviews", response_model=ReviewResponse, status_code=status.HTTP_201_CREATED)
+def create_review(
+    product_id: UUID,
+    review_in: ReviewCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a product review. Only buyers who purchased the product can review."""
+    from models.models import OrderItem
+    
+    # Verify product exists
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    # Verify buyer has purchased this specific product (in a delivered order)
+    purchase = db.query(OrderItem).join(Order).filter(
+        Order.buyer_id == current_user.id,
+        OrderItem.product_id == product_id,
+        Order.status == OrderStatus.delivered,
+    ).first()
+    if not purchase:
+        raise HTTPException(
+            status_code=403,
+            detail="You must purchase and receive this product before reviewing"
+        )
+    
+    # Check if buyer already reviewed this product
+    existing_review = db.query(Review).filter(
+        Review.product_id == product_id,
+        Review.buyer_id == current_user.id,
+    ).first()
+    if existing_review:
+        raise HTTPException(
+            status_code=409,
+            detail="You have already reviewed this product"
+        )
+    
+    # Create review
+    review = Review(
+        product_id=product_id,
+        buyer_id=current_user.id,
+        rating=review_in.rating,
+        comment=review_in.comment,
+    )
+    db.add(review)
+    db.commit()
+    db.refresh(review)
+    return review
+
+
+@router.get("/{product_id}/reviews", response_model=List[ReviewResponse])
+def list_reviews(
+    product_id: UUID,
+    skip: int = 0,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
+    """List all reviews for a product."""
+    # Verify product exists
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    reviews = db.query(Review).filter(
+        Review.product_id == product_id,
+    ).order_by(Review.created_at.desc()).offset(skip).limit(limit).all()
+    
+    return reviews
+
+
+@router.get("/{product_id}/reviews/my", response_model=ReviewResponse)
+def get_my_review(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get current user's review for a product (if exists)."""
+    review = db.query(Review).filter(
+        Review.product_id == product_id,
+        Review.buyer_id == current_user.id,
+    ).first()
+    
+    if not review:
+        raise HTTPException(status_code=404, detail="No review found")
+    
+    return review
