@@ -20,7 +20,7 @@
 
 ---
 
-## 1. Purpose & Scope
+## 1. Scope
 
 Phase 1 produced the *design*: requirements, STRIDE/DREAD threat model, secure
 architecture and a security test plan. **Phase 2 is the working implementation of
