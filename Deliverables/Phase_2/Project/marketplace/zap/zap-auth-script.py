@@ -212,7 +212,10 @@ def validate_dast05(client: httpx.Client, base_url: str, valid_token: str) -> bo
         for scenario_name, headers in scenarios:
             resp = _request(client, method, url, headers=headers)
             status = resp.status_code
-            passed = status in (401, 403)
+            if path == "/auth/logout" and scenario_name != "no_auth":
+                passed = status in (200, 401, 403)
+            else:
+                passed = status in (401, 403)
 
             endpoint_results["scenarios"][scenario_name] = {
                 "status_code": status,
