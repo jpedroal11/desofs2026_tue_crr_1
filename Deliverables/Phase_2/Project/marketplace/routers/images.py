@@ -134,6 +134,31 @@ def serve_product_image_authenticated(
             detail="You do not have permission to access this product image",
         )
 
+    # ── Verify integrity ──────────────────────────────────────────────────
+    try:
+        file_bytes = safe_path.read_bytes()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read image file: {exc}"
+        )
+
+    computed_hash = image_service.compute_sha256(file_bytes)
+    if computed_hash != db_image.sha256_hash:
+        write_audit_log(
+            action="ACCESS_IMAGE",
+            resource="PRODUCT_IMAGE",
+            result="error",
+            user_id=current_user.id,
+            resource_id=product_id,
+            message=f"Integrity check failed: image hash mismatch for {filename}",
+            db=db
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Data integrity error: file hash mismatch"
+        )
+
     # Determine media type from extension
     suffix = safe_path.suffix.lower()
     ext_to_mime = {v: k for k, v in image_service.MIME_TO_EXTENSION.items()}

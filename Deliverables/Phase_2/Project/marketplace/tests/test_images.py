@@ -741,3 +741,32 @@ class TestImageUploadLimitsAsync:
 
         app.dependency_overrides.clear()
 
+
+class TestImageIntegritySecurity:
+
+    def test_image_integrity_failure_blocks_download(self, client, seller_user, jpeg_bytes, tmp_upload_dir):
+        # 1. Write an integration test that uploads a valid image and saves its metadata
+        product_id = _create_product(client, seller_user)
+        files = {"file": ("integrity_test.jpg", io.BytesIO(jpeg_bytes), "image/jpeg")}
+        authenticate_as(client, seller_user)
+        upload_res = client.post(f"/products/{product_id}/images", files=files)
+        assert upload_res.status_code == 201
+        data = upload_res.json()
+        filename = data["filename"]
+
+        # 2. Verify file exists on disk
+        file_path = tmp_upload_dir / filename
+        assert file_path.exists()
+
+        # 3. Manually modify the file content on disk (tampering)
+        file_path.write_bytes(b"tampered image data")
+
+        # 4. Attempt to download the image through the authenticated API endpoint
+        serve_res = client.get(f"/products/{product_id}/images/{filename}")
+
+        # 5. Assert that the system blocks the download and returns the expected data integrity error (500)
+        assert serve_res.status_code == 500
+        assert "integrity" in serve_res.json()["detail"].lower()
+        clear_auth(client)
+
+
