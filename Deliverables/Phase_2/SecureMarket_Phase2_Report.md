@@ -26,8 +26,8 @@ Phase 1 produced the *design*: requirements, STRIDE/DREAD threat model, secure
 architecture and a security test plan. **Phase 2 is the working implementation of
 that design.** This report documents what was actually built, traces each Phase 1
 security requirement to the code that satisfies it, summarises the automated and
-manual security testing, and — in the interest of an honest engineering report —
-lists the places where the implementation deviates from the original design.
+manual security testing, and lists the places where the implementation deviates 
+from the original design.
 
 The application is **SecureMarket**, a back-end marketplace REST API where
 **Sellers** list products (with images), **Buyers** browse, order and review them,
@@ -277,7 +277,7 @@ with custom rule sets and an authenticated ZAP script. Dependency updates are
 automated with Dependabot ([.github/dependabot.yml](../../.github/dependabot.yml)).
 
 Relative to the Phase 1 plan, the implemented pipeline covers SAST, SCA, both DAST
-modes, TLS scanning and SBOM. **Not yet wired in:** Semgrep rule packs and Trivy
+modes, TLS scanning and SBOM. **Not yet included:** Semgrep rule packs and Trivy
 container/image scanning (see §8).
 
 ---
@@ -306,7 +306,7 @@ ignored), oversell prevention, review-without-purchase, duplicate-review, invali
 status transitions, and the full image abuse set (path traversal, magic-byte
 mismatch, image-count/quota limits, direct-path access).
 
-> **Honest caveat on concurrency:** `test_business.py` documents that true
+> **Concurrency testing limitations:** `test_business.py` documents that true
 > stock-race testing needs database-level locking (`SELECT … FOR UPDATE`), which is
 > not exercisable on in-memory SQLite — consistent with the SR-DATA-10 gap in §8.
 
@@ -366,7 +366,7 @@ them, by design.
 
 | ASVS v5.0 area | SR group | Phase 2 status |
 |---|---|---|
-| V6 Authentication | SR-AUTH | ✅ core controls; ◑ token TTL & rate limiting |
+| V6 Authentication | SR-AUTH | ✅ core controls; ✅ token TTL & rate limiting |
 | V7 Session Mgmt | SR-AUTH-08 | ✅ blacklist + revocation cut-off |
 | V8 Authorization | SR-AUTHZ | ✅ RBAC + resource-level ownership |
 | V11 Cryptography | SR-AUTH-02/06, SR-DATA-02 | ✅ bcrypt, HS256; ◑ download integrity |
