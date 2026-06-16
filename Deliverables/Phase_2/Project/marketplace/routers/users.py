@@ -13,16 +13,14 @@ from services.log_service import write_audit_log
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-@router.get(
-    "/",
-    response_model=List[UserResponse],
-    dependencies=[Depends(require_admin)],
-)
-def list_users(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
-    """List all active users. Admin only — the response includes PII (email)
-    so it must not be exposed to unauthenticated callers or enumerated by
-    non-admins.
-    """
+@router.get("/", response_model=List[UserResponse])
+def list_users(
+    skip: int = 0,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """List all active users (Administrator only)."""
     return db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
 
 
@@ -32,9 +30,13 @@ def get_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get a user by ID. Authenticated callers only — the response includes
-    PII (email) so it cannot be public.
-    """
+    """Get a user by ID."""
+    if current_user.id != user_id and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

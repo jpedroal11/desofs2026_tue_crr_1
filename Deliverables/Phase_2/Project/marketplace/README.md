@@ -109,8 +109,8 @@ fallback defaults, so the app will not start if they are unset. See
 ### Users
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/users/` | ✅ (Admin) | List all active users |
-| GET | `/users/{id}` | ✅ | Get user by ID |
+| GET | `/users/` | ✅ Admin | List all active users |
+| GET | `/users/{id}` | ✅ Owner/Admin | Get user by ID |
 | PATCH | `/users/{id}` | ✅ | Update own profile |
 | DELETE | `/users/{id}` | ✅ | Soft-delete own account |
 
